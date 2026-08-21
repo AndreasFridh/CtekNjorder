@@ -13,7 +13,9 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ctek_njord_sim"))
 
-from app.balancer import Balancer, BalancerConfig  # noqa: E402
+from app.balancer import (  # noqa: E402
+    Balancer, BalancerConfig, car_draw_for_baseline,
+)
 
 CEILING = 16
 MIN = 6
@@ -261,3 +263,43 @@ def test_settle_guard_expires_so_a_finished_car_cannot_freeze_it():
     d = bal.compute(now=200.0, house_current=[8, 8, 8], house_age=0,
                     charger_current=[4.2, 4.2, 4.2], ev_uses_phase=[1, 1, 1])
     assert "settles" not in d.reason, "guard should have expired after 10s"
+
+
+# ---------- attributing the meter reading to the car ----------
+#
+# Subtracting the car's draw is what keeps its own consumption from counting
+# against its own allowance. The subtraction is only valid while we can see
+# what it draws: subtract more than it really takes and we invent headroom.
+
+def test_car_draw_is_ignored_once_charger_telemetry_goes_stale():
+    fresh = car_draw_for_baseline([16, 16, 16], charger_age=2, stale_timeout=30)
+    assert fresh == [16, 16, 16]
+    stale = car_draw_for_baseline([16, 16, 16], charger_age=99, stale_timeout=30)
+    assert stale == [0.0, 0.0, 0.0]
+
+
+def test_stale_charger_does_not_invent_headroom():
+    """
+    The regression this guards: assuming a silent charger still draws its last
+    setpoint. If the car is in fact idle, the whole meter reading is house
+    load, and subtracting a phantom 16 A understates the baseline by 16 A.
+    """
+    bal = make(main_fuse=25)
+    warm(bal)
+    house = [20.0, 20.0, 20.0]        # all of it is house load; the car is idle
+
+    phantom = bal.compute(now=1.0, house_current=house, house_age=0,
+                          charger_current=[16, 16, 16], ev_uses_phase=[1, 1, 1])
+
+    bal2 = make(main_fuse=25)
+    warm(bal2)
+    honest = bal2.compute(
+        now=1.0, house_current=house, house_age=0,
+        charger_current=car_draw_for_baseline([16, 16, 16], 99, 30),
+        ev_uses_phase=[1, 1, 1])
+
+    assert phantom.setpoint == 16, "the old behaviour handed out the full 16 A"
+    assert honest.setpoint == 0, "with no visibility it must not hand out current"
+    # 20 A of house plus the 16 A it would have allowed blows a 25 A fuse.
+    assert 20.0 + phantom.setpoint > 25
+    assert 20.0 + honest.setpoint <= 25

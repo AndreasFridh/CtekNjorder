@@ -118,6 +118,11 @@ rather than charge slower, so the add-on commands 0 and pauses.
 - **Falls back when blind.** If the current entities go stale or unavailable
   for longer than `stale_timeout`, it drops to `fallback_current` rather than
   guessing.
+- **Never counts the car against itself, and never over-counts it either.**
+  The car's own draw is subtracted from the meter reading so it does not
+  consume its own allowance. But if the charger stops reporting, none of the
+  reading is attributed to the car: over-subtracting would understate the
+  house load and hand out current that is not there.
 
 ## Options
 
