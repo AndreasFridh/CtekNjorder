@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""
+A minimal fake Home Assistant WebSocket API for testing the add-on.
+
+Serves three per-phase current sensors. The reading is deliberately built the
+way a real meter works - house baseline PLUS the car's actual draw, which it
+reads back off MQTT - so the control loop genuinely closes and we can catch
+mistakes like forgetting to subtract the car.
+
+Walks a scripted load profile that drives the balancer through throttle, pause
+and recovery, none of which we can safely produce in a real house.
+
+  python tools/mock_hass.py --port 18123 --mqtt-port 18830
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import logging
+import time
+
+import paho.mqtt.client as mqtt
+from aiohttp import WSMsgType, web
+
+ENTITIES = ["sensor.mock_l1", "sensor.mock_l2", "sensor.mock_l3"]
+SERIAL = "40353I37W4008218"
+T_UPDATE = f"ctek/ng-v2/client/{SERIAL}/1/update"
+
+# (until_seconds, baseline_amps_per_phase, label)
+PROFILE = [
+    (60, 4.0, "quiet house"),
+    (120, 14.0, "oven + kettle on"),
+    (180, 20.5, "heavy load - car must pause"),
+    (10**9, 4.0, "back to quiet"),
+]
+
+log = logging.getLogger("mock-hass")
+
+
+class World:
+    """Shared truth: the house baseline plus whatever the car is drawing."""
+
+    def __init__(self):
+        self.car = [0.0, 0.0, 0.0]
+        self.start = time.time()
+        self._label = None
+
+    def baseline(self) -> float:
+        t = time.time() - self.start
+        for until, amps, label in PROFILE:
+            if t < until:
+                if label != self._label:
+                    log.info("--- load profile: %s (baseline %.1f A/phase) ---", label, amps)
+                    self._label = label
+                return amps
+        return 4.0
+
+    def house(self) -> list[float]:
+        b = self.baseline()
+        return [round(b + c, 1) for c in self.car]
+
+
+def start_mqtt(world: World, host: str, port: int) -> None:
+    def on_connect(c, u, flags, rc, props=None):
+        c.subscribe(T_UPDATE, qos=0)
+
+    def on_message(c, u, msg):
+        try:
+            world.car = [float(x) for x in json.loads(msg.payload)["Current"]]
+        except Exception:
+            pass
+
+    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="mock-hass")
+    c.on_connect = on_connect
+    c.on_message = on_message
+    c.connect_async(host, port, keepalive=30)
+    c.loop_start()
+
+
+def make_app(world: World) -> web.Application:
+    async def websocket(request):
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        await ws.send_json({"type": "auth_required", "ha_version": "2026.8.0"})
+
+        subscribed = False
+        push_task = None
+
+        async def push():
+            """Emit state_changed events, as a real P1 integration would."""
+            while True:
+                await asyncio.sleep(2.0)
+                for eid, val in zip(ENTITIES, world.house()):
+                    await ws.send_json({
+                        "type": "event",
+                        "event": {
+                            "event_type": "state_changed",
+                            "data": {
+                                "entity_id": eid,
+                                "new_state": {"entity_id": eid, "state": str(val)},
+                            },
+                        },
+                    })
+
+        try:
+            async for msg in ws:
+                if msg.type != WSMsgType.TEXT:
+                    continue
+                data = json.loads(msg.data)
+                mtype, mid = data.get("type"), data.get("id")
+
+                if mtype == "auth":
+                    await ws.send_json({"type": "auth_ok", "ha_version": "2026.8.0"})
+                elif mtype == "get_states":
+                    await ws.send_json({
+                        "id": mid, "type": "result", "success": True,
+                        "result": [
+                            {"entity_id": e, "state": str(v)}
+                            for e, v in zip(ENTITIES, world.house())
+                        ],
+                    })
+                elif mtype == "subscribe_events":
+                    await ws.send_json({"id": mid, "type": "result", "success": True})
+                    if not subscribed:
+                        subscribed = True
+                        push_task = asyncio.create_task(push())
+        finally:
+            if push_task:
+                push_task.cancel()
+        return ws
+
+    app = web.Application()
+    app.router.add_get("/api/websocket", websocket)
+    return app
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--port", type=int, default=18123)
+    ap.add_argument("--mqtt-host", default="127.0.0.1")
+    ap.add_argument("--mqtt-port", type=int, default=18830)
+    args = ap.parse_args()
+
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(name)-14s %(message)s", datefmt="%H:%M:%S")
+
+    world = World()
+    start_mqtt(world, args.mqtt_host, args.mqtt_port)
+    log.info("fake Home Assistant on ws://127.0.0.1:%s/api/websocket", args.port)
+    log.info("entities: %s", ", ".join(ENTITIES))
+    web.run_app(make_app(world), host="127.0.0.1", port=args.port, print=None)
+
+
+if __name__ == "__main__":
+    main()

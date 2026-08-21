@@ -1,0 +1,73 @@
+name: CTEK Njord Load Balancer
+version: "0.1.0"
+slug: ctek_njord_sim
+description: >-
+  Replaces the CTEK Nanogrid Air. Impersonates the adapter on the charger's own
+  MQTT broker and load-balances EV charging against real-time current from
+  Home Assistant.
+url: https://github.com/local/ctek-njord-sim
+arch:
+  - aarch64
+  - amd64
+  - armv7
+  - armhf
+  - i386
+init: false
+homeassistant_api: true
+startup: application
+boot: auto
+
+options:
+  charger_host: "192.168.5.40"
+  charger_port: 1883
+  charger_username: ""
+  charger_password: ""
+  charger_serial: ""
+  adapter_serial: ""
+  main_fuse: 25
+  max_charge_current: 16
+  safety_margin: 1.0
+  phase_rotation: "RST"
+  current_entities:
+    - ""
+    - ""
+    - ""
+  voltage_entities: []
+  power_in_entity: ""
+  power_out_entity: ""
+  stale_timeout: 30
+  fallback_current: 6
+  raise_delay: 30
+  settle_window: 10
+  settle_tolerance: 1.5
+  control_interval: 15
+  meter_interval: 10
+  dry_run: true
+  log_level: info
+
+schema:
+  charger_host: str
+  charger_port: port
+  charger_username: str?
+  charger_password: password?
+  charger_serial: str?
+  adapter_serial: str?
+  main_fuse: int(6,125)
+  max_charge_current: int(6,32)
+  safety_margin: float(0,10)
+  phase_rotation: list(RST|RTS|SRT|STR|TRS|TSR)
+  current_entities:
+    - str?
+  voltage_entities:
+    - str?
+  power_in_entity: str?
+  power_out_entity: str?
+  stale_timeout: int(5,600)
+  fallback_current: int(0,16)
+  raise_delay: int(0,600)
+  settle_window: float(0,120)
+  settle_tolerance: float(0.1,10)
+  control_interval: float(1,60)
+  meter_interval: float(1,60)
+  dry_run: bool
+  log_level: list(trace|debug|info|warning|error)
