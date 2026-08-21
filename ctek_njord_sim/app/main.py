@@ -1,5 +1,6 @@
 """
-Entry point: wires Home Assistant, the balancer, and the charger together.
+Entry point: wires Home Assistant, the balancer, the charger and the web UI
+together.
 
 Control loop runs at 1 Hz. The setpoint is republished on a heartbeat so the
 charger never times out, and immediately whenever the decision changes, so a
@@ -11,16 +12,21 @@ import asyncio
 import logging
 import signal
 import sys
+import time
+from collections import deque
 
 from .balancer import Balancer, BalancerConfig
 from .config import Options
 from .ctek import CtekClient
 from .hass import HassClient
+from .optionspec import LIVE_KEYS
+from .web import WebUI
 
 _LOG = logging.getLogger("ctek")
 
 DEFAULT_VOLTAGE = 230.0
 TICK = 1.0
+HISTORY_SECONDS = 1800  # 30 minutes at 1 Hz
 
 
 def setup_logging(level: str) -> None:
@@ -35,6 +41,7 @@ def setup_logging(level: str) -> None:
 class Service:
     def __init__(self, opts: Options):
         self.opts = opts
+        self.started_at = time.time()
         self.hass = HassClient(
             opts.current_entities
             + opts.voltage_entities
@@ -63,6 +70,12 @@ class Service:
                 settle_tolerance=opts.settle_tolerance,
             )
         )
+        self.web = WebUI(self)
+
+        self.history: deque = deque(maxlen=HISTORY_SECONDS)
+        self.last_decision = None
+        self.last_house: list[float] | None = None
+        self.last_error: str | None = None
         self._last_control = 0.0
         self._last_meter = 0.0
         self._last_status = 0.0
@@ -71,7 +84,7 @@ class Service:
 
     def house_current(self) -> list[float] | None:
         vals = [self.hass.value(e) for e in self.opts.current_entities]
-        if any(v is None for v in vals):
+        if not vals or any(v is None for v in vals):
             return None
         return vals  # type: ignore[return-value]
 
@@ -90,6 +103,114 @@ class Service:
             p_in = sum(c * v for c, v in zip(current, voltage)) / 1000.0
         return p_in, (p_out or 0.0)
 
+    # ---------- state for the web UI ----------
+
+    def snapshot(self) -> dict:
+        charger = self.ctek.state.snapshot()
+        d = self.last_decision
+        ceiling = min(self.opts.max_charge_current,
+                      self.balancer.cfg.charger_fuse_rating)
+        return {
+            "now": time.time(),
+            "uptime": time.time() - self.started_at,
+            "dry_run": self.opts.dry_run,
+            "connected": {
+                "charger": self.ctek.connected.is_set(),
+                "hass": self.hass.connected,
+                "bound": self.ctek.topics is not None,
+            },
+            "charger": {
+                "serial": self.ctek.charger_serial,
+                "state": charger["state"],
+                "current": charger["current"],
+                "ev_uses_phase": charger["ev_uses_phase"],
+                "max_allowed_current": charger["max_allowed_current"],
+                "fuse_rating": charger["fuse_rating"],
+                "min_allowed_current": charger["min_allowed_current"],
+                "phase_rotation": charger["phase_rotation"],
+                "energy": charger["energy"],
+                "power": charger["power"],
+                "age": None if charger["age"] == float("inf") else charger["age"],
+            },
+            "house": {
+                "current": self.last_house,
+                "voltage": self.house_voltage(),
+                "age": self._finite(self.hass.newest_age(self.opts.current_entities)),
+                "entities": self.opts.current_entities,
+            },
+            "decision": {
+                "setpoint": d.setpoint if d else None,
+                "reason": d.reason if d else "starting up",
+                "headroom": d.headroom if d else [],
+                "baseline": d.baseline if d else [],
+            },
+            "limits": {
+                "main_fuse": self.opts.main_fuse,
+                "safety_margin": self.opts.safety_margin,
+                "max_charge_current": self.opts.max_charge_current,
+                "ceiling": ceiling,
+                "min_allowed_current": self.balancer.cfg.min_allowed_current,
+            },
+            "error": self.last_error,
+        }
+
+    @staticmethod
+    def _finite(value: float):
+        return None if value == float("inf") else round(value, 1)
+
+    def history_series(self) -> dict:
+        rows = list(self.history)
+        return {
+            "t": [r[0] for r in rows],
+            "house": [r[1] for r in rows],
+            "car": [r[2] for r in rows],
+            "setpoint": [r[3] for r in rows],
+            "main_fuse": self.opts.main_fuse,
+        }
+
+    # ---------- live reconfiguration ----------
+
+    def apply_live_settings(self, changes: dict) -> list[str]:
+        """
+        Push the settings that do not need a restart into the running objects.
+
+        Returns the keys that actually took effect now; the caller reports the
+        rest as needing a restart.
+        """
+        applied = []
+        for key, value in changes.items():
+            setattr(self.opts, key, value)
+            if key not in LIVE_KEYS:
+                continue
+            applied.append(key)
+
+            if key == "main_fuse":
+                self.balancer.cfg.main_fuse = value
+            elif key == "max_charge_current":
+                self.balancer.cfg.max_charge_current = value
+            elif key == "safety_margin":
+                self.balancer.cfg.safety_margin = value
+            elif key == "fallback_current":
+                self.balancer.cfg.fallback_current = value
+            elif key == "phase_rotation":
+                self.balancer.cfg.phase_rotation = value
+            elif key == "stale_timeout":
+                self.balancer.cfg.stale_timeout = value
+            elif key == "raise_delay":
+                self.balancer.cfg.raise_delay = value
+            elif key == "settle_window":
+                self.balancer.cfg.settle_window = value
+            elif key == "settle_tolerance":
+                self.balancer.cfg.settle_tolerance = value
+            elif key == "dry_run":
+                self.ctek.dry_run = value
+                _LOG.warning("Dry run %s via the web UI",
+                             "ENABLED" if value else "DISABLED - now controlling the charger")
+            elif key == "log_level":
+                logging.getLogger().setLevel(
+                    getattr(logging, str(value).upper(), logging.INFO))
+        return applied
+
     # ---------- control ----------
 
     async def control_loop(self) -> None:
@@ -103,6 +224,7 @@ class Service:
 
             charger = self.ctek.state.snapshot()
             current = self.house_current()
+            self.last_house = current
             age = self.hass.newest_age(opts.current_entities)
 
             # The charger's own configuration always wins over our defaults.
@@ -114,9 +236,8 @@ class Service:
                 self.balancer.cfg.phase_rotation = charger["phase_rotation"]
 
             # Subtract the car's draw AS OF the meter reading, not as of now.
-            # The meter lags by up to meter_interval, and a ramping car moves
-            # ~2 A/s, so using the present draw skews the baseline and makes
-            # the setpoint oscillate.
+            # The meter lags, and a ramping car moves ~2 A/s, so using the
+            # present draw skews the baseline and makes the setpoint oscillate.
             house_ts = self.hass.reading_ts(opts.current_entities)
             charger_current = (
                 self.ctek.state.current_at(house_ts) if house_ts else charger["current"]
@@ -135,6 +256,14 @@ class Service:
                 charger_current=charger_current,
                 ev_uses_phase=charger["ev_uses_phase"],
             )
+            self.last_decision = decision
+
+            self.history.append((
+                round(time.time(), 1),
+                [round(c, 1) for c in current] if current else None,
+                [round(c, 1) for c in charger["current"]],
+                decision.setpoint,
+            ))
 
             # Heartbeat, plus an immediate send whenever the decision moves.
             if decision.changed or (now - self._last_control) >= opts.control_interval:
@@ -160,6 +289,7 @@ class Service:
 
     async def run(self) -> None:
         self.ctek.start()
+        await self.web.start()
         tasks = [
             asyncio.create_task(self.hass.run()),
             asyncio.create_task(self.control_loop()),
@@ -169,19 +299,13 @@ class Service:
         finally:
             for t in tasks:
                 t.cancel()
+            await self.web.stop()
             self.ctek.stop()
 
 
 async def amain() -> int:
     opts = Options.load()
     setup_logging(opts.log_level)
-
-    problems = opts.validate()
-    if problems:
-        for p in problems:
-            _LOG.error("Configuration error: %s", p)
-        _LOG.error("Fix the add-on configuration and restart.")
-        return 1
 
     _LOG.info(
         "main_fuse=%sA max_charge=%sA margin=%.1fA fallback=%sA dry_run=%s",
@@ -192,6 +316,16 @@ async def amain() -> int:
         _LOG.warning("DRY RUN: decisions are logged but nothing is sent to the charger.")
 
     service = Service(opts)
+
+    # Configuration problems are reported in the UI rather than fatal, so the
+    # user can fix them there instead of editing YAML and restarting blind.
+    problems = opts.validate()
+    if problems:
+        service.last_error = " ".join(problems)
+        for p in problems:
+            _LOG.error("Configuration error: %s", p)
+        _LOG.error("Open the add-on's Web UI to fix this. Balancing stays "
+                   "inactive until it is resolved.")
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

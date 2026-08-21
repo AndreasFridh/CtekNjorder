@@ -16,7 +16,8 @@ CTEK. It was reverse-engineered from live captures — see **[PROTOCOL.md](PROTO
 | MQTT client / adapter impersonation | Done — verified end-to-end against the real charger in dry-run |
 | Offline simulation rig | Done — fake charger + fake HA, exercises overload and recovery |
 | Live control (`dry_run: false`) | Verified against the simulator; **not yet against the real charger** |
-| Home Assistant data source | Done — **needs your entity IDs** |
+| Home Assistant data source | Done — pick your entities in the web UI |
+| Web UI | Done — Ingress dashboard and full settings editor, sidebar-capable |
 
 ## Install
 
@@ -27,8 +28,12 @@ add-on from the store.
 2. Top-right **⋮ → Repositories**
 3. Paste `https://github.com/AndreasFridh/CtekNjorder` and click **Add**
 4. Close the dialog; **CTEK Njord Load Balancer** appears in the store
-5. **Install**, then set `main_fuse` and `current_entities` on the Configuration tab
-6. **Start**
+5. **Install**, then **Start**
+6. **Open Web UI**, and turn on **Show in sidebar** to keep it handy
+7. Set your main fuse and meter entities on the **Settings** tab
+
+Everything is configurable from the web UI, including an entity picker that
+lists your own sensors — the Configuration tab is not needed.
 
 Requires Home Assistant OS or Supervised — the add-on store is not available on
 Core or Container installs.
