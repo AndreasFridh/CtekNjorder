@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0
+
+- Split the single chart in two. **Meter current** plots L1/L2/L3 separately
+  against the fuse line, so you can read the actual Home Assistant sensor
+  history rather than a collapsed peak. **Charging** plots allowed against
+  actually drawn, so it is obvious whether the car is following its
+  allowance or has tapered off on its own.
+- Range selector: 5 / 15 / 30 minutes.
+- Live values in the chart legends.
+- Main fuse, max charge current and **safety margin** are now editable on the
+  dashboard itself, with a line spelling out the arithmetic they feed:
+  `25 A fuse - 1 A margin - 14.0 A busiest phase = 10.0 A available`.
+  They apply to the running balancer as soon as they are changed.
+
 ## 0.3.0
 
 - Web UI on Home Assistant Ingress, with a "Show in sidebar" toggle.

@@ -23,9 +23,11 @@ turn on **Show in sidebar** there too — it then appears as *Njord*.
 
 Everything is configurable from the UI; you never need the Configuration tab.
 
-- **Dashboard** — the allowed current and why, a per-phase bar showing house
-  load and car draw against your main fuse, a 30-minute history chart, and
-  charger state.
+- **Dashboard** — the allowed current and why; the main fuse, max charge
+  current and safety margin as editable boxes that apply immediately; a
+  per-phase bar showing house load and car draw against your fuse; a chart of
+  the meter's three phases; a chart of allowed versus actually drawn current;
+  and charger state.
 - **Settings** — every option, grouped, with an entity picker that lists your
   own sensors. Limits and behaviour take effect immediately, so you can tune
   the fuse or the margin while a car is charging. Connection and entity changes
