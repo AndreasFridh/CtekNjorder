@@ -15,7 +15,7 @@ import sys
 import time
 from collections import deque
 
-from .balancer import Balancer, BalancerConfig
+from .balancer import Balancer, BalancerConfig, car_draw_for_baseline
 from .config import Options
 from .ctek import CtekClient
 from .hass import HassClient
@@ -243,11 +243,13 @@ class Service:
                 self.ctek.state.current_at(house_ts) if house_ts else charger["current"]
             )
 
-            # If the charger itself has gone quiet, its reported draw is stale;
-            # assume it is drawing its full setpoint rather than nothing.
-            if charger["age"] > opts.stale_timeout:
-                assumed = float(self.balancer.setpoint or 0)
-                charger_current = [assumed] * 3
+            # If the charger has gone quiet we can no longer tell how much of
+            # the meter reading is the car, so we attribute none of it. See
+            # car_draw_for_baseline: over-subtracting is the dangerous way to
+            # be wrong.
+            charger_current = car_draw_for_baseline(
+                charger_current, charger["age"], opts.stale_timeout
+            )
 
             decision = self.balancer.compute(
                 now=now,

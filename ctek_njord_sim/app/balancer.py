@@ -34,6 +34,30 @@ class BalancerConfig:
     charger_fuse_rating: int = 16
 
 
+def car_draw_for_baseline(
+    charger_current: list[float] | None,
+    charger_age: float,
+    stale_timeout: float,
+) -> list[float]:
+    """
+    How much of the meter reading to attribute to the car.
+
+    Subtracting the car is what stops its own draw from counting against its
+    own allowance. But the subtraction is only safe while we can still see
+    what it is drawing: subtract MORE than the car really takes and the
+    baseline is understated, the headroom overstated, and we hand out current
+    that is not there.
+
+    So when the charger's telemetry goes stale, attribute nothing. The meter
+    reading is real regardless, and treating all of it as house load can only
+    under-estimate the spare capacity - never over-estimate it. That is the
+    direction we want to be wrong in.
+    """
+    if charger_age > stale_timeout:
+        return [0.0, 0.0, 0.0]
+    return list(charger_current or [0.0, 0.0, 0.0])
+
+
 @dataclass
 class Decision:
     setpoint: int

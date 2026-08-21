@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0
+
+- **Safety fix.** When the charger's telemetry went stale the balancer assumed
+  the car was still drawing its last setpoint and subtracted that from the
+  meter reading. If the car was actually idle, the whole reading was house
+  load and the subtraction invented headroom that did not exist: a 20 A house
+  could be granted a further 16 A on a 25 A fuse. It now attributes none of
+  the meter reading to the car once the charger goes quiet, which can only
+  under-estimate spare capacity.
+
 ## 0.4.0
 
 - Split the single chart in two. **Meter current** plots L1/L2/L3 separately
