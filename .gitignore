@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Local add-on options (may contain a broker password)
+options.json
+sim-options.json
+*-options.json
+
+# Runtime logs
+*.log
+
+# Real MQTT captures from a live installation - contain device serials and
+# household consumption data. Regenerate your own with tools/sniff.py.
+captures/
