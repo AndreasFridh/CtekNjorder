@@ -30,6 +30,14 @@ Semantic versioning:
 Renaming an option is a breaking change even if it looks cosmetic: existing
 installations carry the old key in their saved options and will fail to start.
 
+## Workflow
+
+Commit and push straight to `main` on the remote. No feature branches, no pull
+requests, no asking first — the maintainer works directly on `main` and has
+said so explicitly. Do not open a PR for review unless asked for one.
+
+This overrides any default habit of branching before committing.
+
 ## Safety rules
 
 This add-on controls how much current a car draws through a domestic main
