@@ -1,5 +1,5 @@
 name: CTEK Njord Load Balancer
-version: "0.2.0"
+version: "0.3.0"
 slug: ctek_njord_sim
 description: >-
   Replaces the CTEK Nanogrid Air. Impersonates the adapter on the charger's own
@@ -14,8 +14,13 @@ arch:
   - i386
 init: false
 homeassistant_api: true
+hassio_api: true
 startup: application
 boot: auto
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:ev-station
+panel_title: Njord
 
 options:
   charger_host: "192.168.5.40"

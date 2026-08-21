@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CTEK Njord Load Balancer</title>
+<style>
+:root{
+  --bg:#f5f6f8; --card:#fff; --fg:#17191c; --muted:#6b7280; --line:#e3e6ea;
+  --accent:#03a9f4; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+  --baseline:#64748b; --car:#03a9f4; --free:#e8ebef;
+  --radius:12px;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#111418; --card:#1b1f25; --fg:#e6e8eb; --muted:#9aa3ad; --line:#2a3038;
+    --free:#252b33; --baseline:#7c8b9c;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1000px;margin:0 auto;padding:16px}
+h1{font-size:18px;margin:0;font-weight:650}
+h2{font-size:13px;margin:0 0 12px;font-weight:650;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--muted)}
+header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.badges{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.badge{font-size:12px;padding:3px 9px;border-radius:99px;border:1px solid var(--line);
+  background:var(--card);display:flex;align-items:center;gap:5px}
+.dot{width:7px;height:7px;border-radius:99px;background:var(--bad)}
+.dot.on{background:var(--ok)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:16px;margin-bottom:14px}
+.banner{border-radius:var(--radius);padding:11px 14px;margin-bottom:14px;font-size:13px;
+  display:flex;gap:9px;align-items:flex-start}
+.banner.warn{background:#f59e0b1f;border:1px solid #f59e0b66}
+.banner.bad{background:#ef44441f;border:1px solid #ef444466}
+.banner.ok{background:#22c55e1f;border:1px solid #22c55e66}
+.tabs{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--line)}
+.tab{padding:8px 14px;cursor:pointer;border:0;background:none;color:var(--muted);
+  font:inherit;font-weight:600;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab.sel{color:var(--fg);border-bottom-color:var(--accent)}
+.hero{display:flex;gap:22px;align-items:center;flex-wrap:wrap}
+.big{font-size:52px;font-weight:250;line-height:1;font-variant-numeric:tabular-nums}
+.big span{font-size:19px;color:var(--muted);margin-left:3px}
+.reason{color:var(--muted);font-size:13px;flex:1;min-width:200px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:14px}
+.stat .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.stat .v{font-size:19px;font-variant-numeric:tabular-nums;margin-top:2px}
+.phase{margin-bottom:13px}
+.phase:last-child{margin-bottom:0}
+.phase .lbl{display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px}
+.phase .lbl b{font-variant-numeric:tabular-nums;font-weight:600}
+.bar{height:26px;background:var(--free);border-radius:6px;overflow:hidden;display:flex;
+  position:relative}
+.seg{height:100%;transition:width .4s ease}
+.seg.base{background:var(--baseline)}
+.seg.car{background:var(--car)}
+.limit{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--bad);opacity:.8}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:11px;flex-wrap:wrap}
+.sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
+canvas{width:100%;height:190px;display:block}
+.grp{margin-bottom:22px}
+.row{display:grid;grid-template-columns:210px 1fr;gap:14px;align-items:start;
+  padding:11px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.row label{font-weight:600;padding-top:6px}
+.row .help{font-size:12px;color:var(--muted);margin-top:5px}
+.row .restart{font-size:11px;color:var(--warn)}
+input,select{width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:8px;
+  background:var(--bg);color:var(--fg);font:inherit}
+input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+input[type=checkbox]{width:auto}
+.unit{display:flex;align-items:center;gap:8px}
+.unit span{color:var(--muted);font-size:12px;white-space:nowrap}
+.ent{margin-bottom:6px}
+button.act{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:9px 18px;
+  font:inherit;font-weight:600;cursor:pointer}
+button.act:disabled{opacity:.5;cursor:default}
+button.ghost{background:none;border:1px solid var(--line);color:var(--fg)}
+.actions{display:flex;gap:10px;align-items:center;position:sticky;bottom:0;
+  background:var(--card);padding-top:14px;border-top:1px solid var(--line);flex-wrap:wrap}
+.hide{display:none}
+.muted{color:var(--muted)}
+.togg{font-size:12px;color:var(--accent);cursor:pointer;background:none;border:0;
+  font:inherit;padding:0;text-decoration:underline}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>CTEK Njord Load Balancer</h1>
+  <div class="badges">
+    <div class="badge"><span class="dot" id="d-charger"></span>Charger</div>
+    <div class="badge"><span class="dot" id="d-hass"></span>Home Assistant</div>
+  </div>
+</header>
+
+<div id="banners"></div>
+
+<div class="tabs">
+  <button class="tab sel" data-tab="dash">Dashboard</button>
+  <button class="tab" data-tab="set">Settings</button>
+</div>
+
+<!-- ============ DASHBOARD ============ -->
+<section id="tab-dash">
+  <div class="card">
+    <div class="hero">
+      <div>
+        <div class="k muted" style="font-size:11px;text-transform:uppercase">Allowed current</div>
+        <div class="big" id="setpoint">–<span>A</span></div>
+      </div>
+      <div class="reason" id="reason">Starting up…</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Load per phase</h2>
+    <div id="phases"></div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--baseline)"></i>House</span>
+      <span><i class="sw" style="background:var(--car)"></i>Car</span>
+      <span><i class="sw" style="background:var(--free)"></i>Spare</span>
+      <span><i class="sw" style="background:var(--bad)"></i>Fuse limit</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Last 30 minutes</h2>
+    <canvas id="chart"></canvas>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--baseline)"></i>House peak</span>
+      <span><i class="sw" style="background:var(--car)"></i>Car</span>
+      <span><i class="sw" style="background:var(--ok)"></i>Setpoint</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Charger</h2>
+    <div class="stats" id="stats"></div>
+  </div>
+</section>
+
+<!-- ============ SETTINGS ============ -->
+<section id="tab-set" class="hide">
+  <div id="set-banner"></div>
+  <div class="card">
+    <div style="display:flex;align-items:center;margin-bottom:14px">
+      <h2 style="margin:0">Configuration</h2>
+      <button class="togg" id="adv-toggle" style="margin-left:auto">Show advanced</button>
+    </div>
+    <div id="form"><p class="muted">Loading…</p></div>
+    <div class="actions">
+      <button class="act" id="save">Save</button>
+      <button class="act ghost" id="restart">Restart add-on</button>
+      <span id="save-msg" class="muted"></span>
+    </div>
+  </div>
+</section>
+
+</div>
+<script>
+const $ = s => document.querySelector(s);
+const api = p => fetch('./api/' + p).then(r => r.json());
+let SPECS = [], VALUES = {}, ENTS = null, showAdv = false, LAST = null;
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('sel', x === t));
+  $('#tab-dash').classList.toggle('hide', t.dataset.tab !== 'dash');
+  $('#tab-set').classList.toggle('hide', t.dataset.tab !== 'set');
+  if (t.dataset.tab === 'set' && !SPECS.length) loadSettings();
+});
+
+/* ---------- dashboard ---------- */
+function banner(kind, html) { return `<div class="banner ${kind}">${html}</div>`; }
+
+function renderBanners(s) {
+  let out = '';
+  if (s.error)
+    out += banner('bad', `<b>Configuration problem.</b>&nbsp;${s.error} Fix it under Settings.`);
+  if (s.dry_run)
+    out += banner('warn', '<b>Dry run.</b>&nbsp;Decisions are logged but nothing is sent to the charger. Turn this off under Settings once you are happy — and block the Nanogrid Air first, or the two will fight.');
+  if (!s.connected.charger)
+    out += banner('bad', '<b>Not connected to the charger.</b>&nbsp;Check the address under Settings.');
+  else if (!s.connected.bound)
+    out += banner('warn', '<b>Connected, but no charger found yet.</b>&nbsp;Waiting for its retained configuration topic.');
+  if (!s.connected.hass)
+    out += banner('bad', '<b>Not connected to Home Assistant.</b>&nbsp;No live meter readings.');
+  $('#banners').innerHTML = out;
+}
+
+function renderPhases(s) {
+  const fuse = s.limits.main_fuse, margin = s.limits.safety_margin;
+  const house = s.house.current, car = s.charger.current || [0, 0, 0];
+  const base = s.decision.baseline && s.decision.baseline.length ? s.decision.baseline : null;
+  const scale = Math.max(fuse, ...(house || [0])) * 1.06;
+  let out = '';
+  for (let i = 0; i < 3; i++) {
+    const c = car[i] || 0;
+    const b = base ? base[i] : (house ? Math.max(0, house[i] - c) : 0);
+    const total = b + c;
+    const over = total > fuse - margin;
+    out += `<div class="phase">
+      <div class="lbl"><span>L${i + 1}</span>
+        <span class="muted">house <b>${b.toFixed(1)}</b> + car <b>${c.toFixed(1)}</b>
+        = <b style="color:${over ? 'var(--bad)' : 'inherit'}">${total.toFixed(1)} A</b>
+        of ${fuse} A</span></div>
+      <div class="bar">
+        <div class="seg base" style="width:${Math.min(100, b / scale * 100)}%"></div>
+        <div class="seg car" style="width:${Math.min(100, c / scale * 100)}%"></div>
+        <div class="limit" style="left:${Math.min(100, fuse / scale * 100)}%"></div>
+      </div></div>`;
+  }
+  $('#phases').innerHTML = out;
+}
+
+function renderStats(s) {
+  const st = { 0: 'Idle', 1: 'Connected', 2: 'Charging', 3: 'Finished', 4: 'Fault' };
+  const c = s.charger;
+  const cells = [
+    ['State', c.state === null ? '–' : (st[c.state] || 'State ' + c.state)],
+    ['Charger reports', c.max_allowed_current === null ? '–' : c.max_allowed_current + ' A'],
+    ['Power', c.power === null ? '–' : (c.power / 1000).toFixed(2) + ' kW'],
+    ['Energy', c.energy === null ? '–' : (c.energy / 1000).toFixed(1) + ' kWh'],
+    ['Serial', c.serial || '–'],
+    ['Meter age', s.house.age === null ? '–' : s.house.age + ' s'],
+  ];
+  $('#stats').innerHTML = cells.map(([k, v]) =>
+    `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+}
+
+function renderState(s) {
+  LAST = s;
+  $('#d-charger').classList.toggle('on', s.connected.charger && s.connected.bound);
+  $('#d-hass').classList.toggle('on', s.connected.hass);
+  const sp = s.decision.setpoint;
+  $('#setpoint').innerHTML = (sp === null ? '–' : sp) + '<span>A</span>';
+  $('#setpoint').style.color = sp === 0 ? 'var(--warn)' : 'inherit';
+  $('#reason').textContent = s.decision.reason;
+  renderBanners(s);
+  renderPhases(s);
+  renderStats(s);
+}
+
+/* ---------- chart ---------- */
+function drawChart(h) {
+  const cv = $('#chart'), dpr = devicePixelRatio || 1;
+  const w = cv.clientWidth, ht = cv.clientHeight;
+  cv.width = w * dpr; cv.height = ht * dpr;
+  const g = cv.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, w, ht);
+  const css = getComputedStyle(document.documentElement);
+  const col = n => css.getPropertyValue(n).trim();
+  const n = h.t.length;
+  if (!n) { g.fillStyle = col('--muted'); g.font = '13px system-ui';
+    g.fillText('Collecting data…', 10, 24); return; }
+
+  const pad = { l: 30, r: 8, t: 10, b: 18 };
+  const max = Math.max(h.main_fuse * 1.1, ...h.house.filter(Boolean).map(v => Math.max(...v)));
+  const X = i => pad.l + (w - pad.l - pad.r) * (n === 1 ? 0 : i / (n - 1));
+  const Y = v => ht - pad.b - (ht - pad.t - pad.b) * (v / max);
+
+  g.strokeStyle = col('--line'); g.fillStyle = col('--muted');
+  g.font = '10px system-ui'; g.lineWidth = 1;
+  for (let v = 0; v <= max; v += max > 30 ? 10 : 5) {
+    g.beginPath(); g.moveTo(pad.l, Y(v)); g.lineTo(w - pad.r, Y(v)); g.stroke();
+    g.fillText(v, 6, Y(v) + 3);
+  }
+  // The fuse itself, so every other line reads against it.
+  g.strokeStyle = col('--bad'); g.setLineDash([4, 3]); g.beginPath();
+  g.moveTo(pad.l, Y(h.main_fuse)); g.lineTo(w - pad.r, Y(h.main_fuse)); g.stroke();
+  g.setLineDash([]);
+
+  const line = (vals, colour, width) => {
+    g.strokeStyle = colour; g.lineWidth = width; g.beginPath();
+    let started = false;
+    vals.forEach((v, i) => {
+      if (v === null || v === undefined) { started = false; return; }
+      started ? g.lineTo(X(i), Y(v)) : g.moveTo(X(i), Y(v)); started = true;
+    });
+    g.stroke();
+  };
+  line(h.house.map(v => v ? Math.max(...v) : null), col('--baseline'), 1.5);
+  line(h.car.map(v => v ? Math.max(...v) : null), col('--car'), 1.5);
+  line(h.setpoint, col('--ok'), 2);
+}
+
+/* ---------- settings ---------- */
+function entityInput(key, idx, val, kind) {
+  const id = `${key}_${idx}`;
+  return `<div class="ent"><input id="${id}" data-key="${key}" data-idx="${idx}"
+    list="dl-${kind}" value="${val || ''}" placeholder="sensor.…"></div>`;
+}
+
+function field(sp) {
+  const v = VALUES[sp.key];
+  if (sp.type === 'bool')
+    return `<input type="checkbox" id="f_${sp.key}" data-key="${sp.key}" ${v ? 'checked' : ''}>`;
+  if (sp.type === 'select')
+    return `<select id="f_${sp.key}" data-key="${sp.key}">` +
+      sp.choices.map(c => `<option ${c === v ? 'selected' : ''}>${c}</option>`).join('') + '</select>';
+  if (sp.type === 'entity3') {
+    const kind = sp.key.startsWith('current') ? 'current' : 'voltage';
+    const arr = v || [];
+    return [0, 1, 2].map(i => entityInput(sp.key, i, arr[i], kind)).join('');
+  }
+  if (sp.type === 'entity')
+    return `<input id="f_${sp.key}" data-key="${sp.key}" list="dl-power" value="${v || ''}" placeholder="sensor.…">`;
+  const t = (sp.type === 'int' || sp.type === 'float') ? 'number'
+    : (sp.type === 'password' ? 'password' : 'text');
+  const attrs = [
+    t === 'number' && sp.min !== null ? `min="${sp.min}"` : '',
+    t === 'number' && sp.max !== null ? `max="${sp.max}"` : '',
+    t === 'number' ? `step="${sp.step || (sp.type === 'int' ? 1 : 0.1)}"` : '',
+  ].join(' ');
+  const input = `<input type="${t}" id="f_${sp.key}" data-key="${sp.key}" value="${v ?? ''}" ${attrs}>`;
+  return sp.unit ? `<div class="unit">${input}<span>${sp.unit}</span></div>` : input;
+}
+
+function renderForm() {
+  const groups = {};
+  SPECS.forEach(s => { if (!s.advanced || showAdv) (groups[s.group] ||= []).push(s); });
+  let out = '';
+  for (const [name, items] of Object.entries(groups)) {
+    out += `<div class="grp"><h2>${name}</h2>`;
+    items.forEach(sp => {
+      out += `<div class="row"><label for="f_${sp.key}">${sp.label}</label><div>
+        ${field(sp)}
+        ${sp.help ? `<div class="help">${sp.help}</div>` : ''}
+        ${sp.restart ? '<div class="restart">Takes effect after a restart</div>' : ''}
+      </div></div>`;
+    });
+    out += '</div>';
+  }
+  // Datalists power the entity pickers without needing a custom widget.
+  out += ['current', 'voltage', 'power'].map(k =>
+    `<datalist id="dl-${k}">` + ((ENTS && ENTS[k]) || []).map(e =>
+      `<option value="${e.entity_id}">${e.name} — ${e.state} ${e.unit}</option>`).join('') +
+    '</datalist>').join('');
+  $('#form').innerHTML = out;
+}
+
+async function loadSettings() {
+  const s = await api('settings');
+  SPECS = s.specs; VALUES = s.values;
+  if (!s.supervisor)
+    $('#set-banner').innerHTML = banner('warn',
+      'Not running under the Supervisor, so changes apply to the running add-on but are not saved.');
+  renderForm();
+  api('entities').then(e => { ENTS = e; renderForm(); });
+}
+
+function collect() {
+  const out = {};
+  SPECS.forEach(sp => {
+    if (sp.type === 'entity3') {
+      const vals = [0, 1, 2].map(i => {
+        const el = document.querySelector(`[data-key="${sp.key}"][data-idx="${i}"]`);
+        return el ? el.value.trim() : '';
+      }).filter(Boolean);
+      // Hidden advanced fields are absent from the DOM; do not clear them.
+      if (document.querySelector(`[data-key="${sp.key}"]`)) out[sp.key] = vals;
+      return;
+    }
+    const el = $(`#f_${sp.key}`);
+    if (!el) return;
+    out[sp.key] = sp.type === 'bool' ? el.checked : el.value;
+  });
+  return out;
+}
+
+$('#adv-toggle').onclick = () => {
+  showAdv = !showAdv;
+  $('#adv-toggle').textContent = showAdv ? 'Hide advanced' : 'Show advanced';
+  const keep = collect();          // do not lose edits when re-rendering
+  Object.assign(VALUES, keep);
+  renderForm();
+};
+
+$('#save').onclick = async () => {
+  const btn = $('#save'); btn.disabled = true;
+  $('#save-msg').textContent = 'Saving…';
+  try {
+    const r = await fetch('./api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: collect() }),
+    }).then(x => x.json());
+
+    if (!r.ok) {
+      $('#set-banner').innerHTML = banner('bad', `<b>Not saved.</b>&nbsp;${r.error}`);
+      $('#save-msg').textContent = '';
+    } else {
+      let msg = r.persisted ? 'Saved.' : 'Applied.';
+      if (r.needs_restart.length)
+        msg += ` ${r.needs_restart.join(', ')} need a restart to take effect.`;
+      $('#set-banner').innerHTML = banner(r.needs_restart.length ? 'warn' : 'ok', msg
+        + (r.warning ? ' ' + r.warning : ''));
+      $('#save-msg').textContent = '';
+      const s = await api('settings'); VALUES = s.values; renderForm();
+    }
+  } catch (e) {
+    $('#save-msg').textContent = 'Failed: ' + e;
+  }
+  btn.disabled = false;
+};
+
+$('#restart').onclick = async () => {
+  if (!confirm('Restart the add-on? Charging control pauses for a few seconds.')) return;
+  $('#save-msg').textContent = 'Restarting…';
+  await fetch('./api/restart', { method: 'POST' }).catch(() => {});
+};
+
+/* ---------- polling ---------- */
+async function tick() {
+  try { renderState(await api('state')); } catch (e) {}
+}
+async function tickHistory() {
+  try { drawChart(await api('history')); } catch (e) {}
+}
+tick(); tickHistory();
+setInterval(tick, 1000);
+setInterval(tickHistory, 10000);
+addEventListener('resize', () => tickHistory());
+</script>
+</body>
+</html>

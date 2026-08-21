@@ -16,13 +16,28 @@ you unblock it. Powering it off works equally well.
 
 You do **not** need to unpair, factory-reset, or reconfigure the charger.
 
+## The web UI
+
+Open it with **Open Web UI** on the add-on page. To keep it one click away,
+turn on **Show in sidebar** there too — it then appears as *Njord*.
+
+Everything is configurable from the UI; you never need the Configuration tab.
+
+- **Dashboard** — the allowed current and why, a per-phase bar showing house
+  load and car draw against your main fuse, a 30-minute history chart, and
+  charger state.
+- **Settings** — every option, grouped, with an entity picker that lists your
+  own sensors. Limits and behaviour take effect immediately, so you can tune
+  the fuse or the margin while a car is charging. Connection and entity changes
+  are flagged as needing a restart, and there is a button for that.
+
 ## Setup
 
 ### 1. Find your charger
 
 The charger hosts the MQTT broker itself. Its address is shown in the CTEK app
 under the charger's network details, as `mqtt://<ip>` with a port (normally
-1883). Put that IP in `charger_host`.
+1883). Put that IP in **Charger address** on the Settings tab.
 
 No username or password is needed — the broker accepts anonymous connections.
 The credential fields exist only in case a future firmware locks that down.
@@ -32,7 +47,7 @@ retained topics on connect. Check the log for `Bound to charger ...` to confirm.
 
 ### 2. Set your main fuse
 
-`main_fuse` is the rating of your property's **main** breaker, per phase — not
+**Main fuse** is the rating of your property's **main** breaker, per phase — not
 the charger's fuse, and not the breaker on the charging circuit. Get this
 right; everything else depends on it.
 
@@ -42,15 +57,17 @@ trip your main breaker.
 
 ### 3. Point it at your meter
 
-`current_entities` takes exactly three entity IDs, one per phase, reporting
+**Current sensors** takes exactly three entities, one per phase, reporting
 **amps** at your grid connection point. A P1/HAN meter reader is ideal, since
 that is the same source the Nanogrid Air uses.
 
-```yaml
-current_entities:
-  - sensor.p1_meter_current_phase_1
-  - sensor.p1_meter_current_phase_2
-  - sensor.p1_meter_current_phase_3
+The picker lists your own sensors filtered to amps, so you can choose rather
+than type. They will look something like:
+
+```
+sensor.p1_meter_current_phase_1
+sensor.p1_meter_current_phase_2
+sensor.p1_meter_current_phase_3
 ```
 
 These must measure the **whole property**, including the charger. The add-on
@@ -62,17 +79,16 @@ only affect the meter data mirrored back to the charger, not the balancing.
 
 ### 4. Watch it in dry run
 
-`dry_run` starts **on**. The add-on connects, reads everything, and logs the
-setpoint it *would* send without sending it. Let it run through a charging
-session and check the log:
+`dry_run` starts **on**. The add-on connects, reads everything, and shows the
+setpoint it *would* send without sending it. A banner on the dashboard says so.
 
-```
-house=[19.4, 20.4, 20.3] A | car=[16.0, 15.8, 15.8] A | setpoint=16A (charger reports 16A)
-```
+Let it run through a charging session and watch the dashboard: `house` should
+track your meter, `car` should track the charger, and the per-phase bars should
+sit sensibly below your fuse line.
 
-`house` should track your meter, `car` should track the charger, and `setpoint`
-should look sane for your fuse. When you are satisfied, set `dry_run: false`
-and restart.
+When you are satisfied, turn **Dry run** off on the Settings tab. It takes
+effect immediately, with no restart — the log will say
+`Dry run DISABLED - now controlling the charger`.
 
 ## How it decides
 
