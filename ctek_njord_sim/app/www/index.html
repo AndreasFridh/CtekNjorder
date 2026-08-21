@@ -101,6 +101,7 @@ button.ghost{background:none;border:1px solid var(--line);color:var(--fg)}
 .actions{display:flex;gap:10px;align-items:center;position:sticky;bottom:0;
   background:var(--card);padding-top:14px;border-top:1px solid var(--line);flex-wrap:wrap}
 .hide{display:none}
+body.offline .card,body.offline .tabs{opacity:.5;filter:grayscale(.6)}
 .muted{color:var(--muted)}
 .togg{font-size:12px;color:var(--accent);cursor:pointer;background:none;border:0;
   font:inherit;padding:0;text-decoration:underline}
@@ -210,6 +211,13 @@ button.ghost{background:none;border:1px solid var(--line);color:var(--fg)}
 <script>
 const $ = s => document.querySelector(s);
 const api = p => fetch('./api/' + p).then(r => r.json());
+
+// Everything below builds HTML with innerHTML, and not all of it is ours:
+// the charger serial comes out of an MQTT topic on a broker that accepts
+// anonymous publishes, and entity names come from Home Assistant. Escape at
+// every interpolation rather than trying to remember which values are safe.
+const esc = v => String(v ?? '').replace(/[&<>"']/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let SPECS = [], VALUES = {}, ENTS = null, showAdv = false, LAST = null;
 
 /* ---------- tabs ---------- */
@@ -226,7 +234,7 @@ function banner(kind, html) { return `<div class="banner ${kind}">${html}</div>`
 function renderBanners(s) {
   let out = '';
   if (s.error)
-    out += banner('bad', `<b>Configuration problem.</b>&nbsp;${s.error} Fix it under Settings.`);
+    out += banner('bad', `<b>Configuration problem.</b>&nbsp;${esc(s.error)} Fix it under Settings.`);
   if (s.dry_run)
     out += banner('warn', '<b>Dry run.</b>&nbsp;Decisions are logged but nothing is sent to the charger. Turn this off under Settings once you are happy — and block the Nanogrid Air first, or the two will fight.');
   if (!s.connected.charger)
@@ -264,16 +272,18 @@ function renderPhases(s) {
 }
 
 function renderStats(s) {
-  const st = { 0: 'Idle', 1: 'Connected', 2: 'Charging', 3: 'Finished', 4: 'Fault' };
+  // Only State 2 has ever been observed on a real charger (see PROTOCOL.md).
+  // Naming the others would be a guess presented as fact, so show the number.
   const c = s.charger;
   const cells = [
-    ['State', c.state === null ? '–' : (st[c.state] || 'State ' + c.state)],
+    ['State', c.state === null ? '–' : (c.state === 2 ? 'Charging' : 'State ' + c.state)],
     ['Charger reports', c.max_allowed_current === null ? '–' : c.max_allowed_current + ' A'],
     ['Power', c.power === null ? '–' : (c.power / 1000).toFixed(2) + ' kW'],
     ['Energy', c.energy === null ? '–' : (c.energy / 1000).toFixed(1) + ' kWh'],
-    ['Serial', c.serial || '–'],
+    ['Serial', esc(c.serial) || '–'],
     ['Meter age', s.house.age === null ? '–' : s.house.age + ' s'],
   ];
+  // `v` is already escaped where it came from outside; `k` is ours.
   $('#stats').innerHTML = cells.map(([k, v]) =>
     `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
 }
@@ -333,7 +343,7 @@ function renderState(s) {
   const sp = s.decision.setpoint;
   $('#setpoint').innerHTML = (sp === null ? '–' : sp) + '<span>A</span>';
   $('#setpoint').style.color = sp === 0 ? 'var(--warn)' : 'inherit';
-  $('#reason').textContent = s.decision.reason;
+  $('#reason').textContent = s.decision.reason;   // textContent: no escaping needed
   renderBanners(s);
   renderQuick(s);
   renderPhases(s);
@@ -458,7 +468,7 @@ function renderCharts(raw) {
 function entityInput(key, idx, val, kind) {
   const id = `${key}_${idx}`;
   return `<div class="ent"><input id="${id}" data-key="${key}" data-idx="${idx}"
-    list="dl-${kind}" value="${val || ''}" placeholder="sensor.…"></div>`;
+    list="dl-${kind}" value="${esc(val)}" placeholder="sensor.…"></div>`;
 }
 
 function field(sp) {
@@ -467,14 +477,14 @@ function field(sp) {
     return `<input type="checkbox" id="f_${sp.key}" data-key="${sp.key}" ${v ? 'checked' : ''}>`;
   if (sp.type === 'select')
     return `<select id="f_${sp.key}" data-key="${sp.key}">` +
-      sp.choices.map(c => `<option ${c === v ? 'selected' : ''}>${c}</option>`).join('') + '</select>';
+      sp.choices.map(c => `<option ${c === v ? 'selected' : ''}>${esc(c)}</option>`).join('') + '</select>';
   if (sp.type === 'entity3') {
     const kind = sp.key.startsWith('current') ? 'current' : 'voltage';
     const arr = v || [];
     return [0, 1, 2].map(i => entityInput(sp.key, i, arr[i], kind)).join('');
   }
   if (sp.type === 'entity')
-    return `<input id="f_${sp.key}" data-key="${sp.key}" list="dl-power" value="${v || ''}" placeholder="sensor.…">`;
+    return `<input id="f_${sp.key}" data-key="${sp.key}" list="dl-power" value="${esc(v)}" placeholder="sensor.…">`;
   const t = (sp.type === 'int' || sp.type === 'float') ? 'number'
     : (sp.type === 'password' ? 'password' : 'text');
   const attrs = [
@@ -482,7 +492,7 @@ function field(sp) {
     t === 'number' && sp.max !== null ? `max="${sp.max}"` : '',
     t === 'number' ? `step="${sp.step || (sp.type === 'int' ? 1 : 0.1)}"` : '',
   ].join(' ');
-  const input = `<input type="${t}" id="f_${sp.key}" data-key="${sp.key}" value="${v ?? ''}" ${attrs}>`;
+  const input = `<input type="${t}" id="f_${sp.key}" data-key="${sp.key}" value="${esc(v)}" ${attrs}>`;
   return sp.unit ? `<div class="unit">${input}<span>${sp.unit}</span></div>` : input;
 }
 
@@ -504,7 +514,7 @@ function renderForm() {
   // Datalists power the entity pickers without needing a custom widget.
   out += ['current', 'voltage', 'power'].map(k =>
     `<datalist id="dl-${k}">` + ((ENTS && ENTS[k]) || []).map(e =>
-      `<option value="${e.entity_id}">${e.name} — ${e.state} ${e.unit}</option>`).join('') +
+      `<option value="${esc(e.entity_id)}">${esc(e.name)} — ${esc(e.state)} ${esc(e.unit)}</option>`).join('') +
     '</datalist>').join('');
   $('#form').innerHTML = out;
 }
@@ -556,14 +566,14 @@ $('#save').onclick = async () => {
     }).then(x => x.json());
 
     if (!r.ok) {
-      $('#set-banner').innerHTML = banner('bad', `<b>Not saved.</b>&nbsp;${r.error}`);
+      $('#set-banner').innerHTML = banner('bad', `<b>Not saved.</b>&nbsp;${esc(r.error)}`);
       $('#save-msg').textContent = '';
     } else {
       let msg = r.persisted ? 'Saved.' : 'Applied.';
       if (r.needs_restart.length)
         msg += ` ${r.needs_restart.join(', ')} need a restart to take effect.`;
-      $('#set-banner').innerHTML = banner(r.needs_restart.length ? 'warn' : 'ok', msg
-        + (r.warning ? ' ' + r.warning : ''));
+      $('#set-banner').innerHTML = banner(r.needs_restart.length ? 'warn' : 'ok',
+        esc(msg + (r.warning ? ' ' + r.warning : '')));
       $('#save-msg').textContent = '';
       const s = await api('settings'); VALUES = s.values; renderForm();
     }
@@ -580,8 +590,21 @@ $('#restart').onclick = async () => {
 };
 
 /* ---------- polling ---------- */
+let missed = 0;
 async function tick() {
-  try { renderState(await api('state')); } catch (e) {}
+  try {
+    renderState(await api('state'));
+    if (missed) { missed = 0; document.body.classList.remove('offline'); }
+  } catch (e) {
+    // A frozen dashboard looks exactly like a healthy one, which is the worst
+    // possible failure for a page whose job is to show live current. Say so.
+    if (++missed === 3) {
+      document.body.classList.add('offline');
+      $('#banners').innerHTML = banner('bad',
+        '<b>Lost contact with the add-on.</b>&nbsp;Everything below is frozen at the ' +
+        'last reading and no longer reflects the charger. Check the add-on log.');
+    }
+  }
 }
 async function tickHistory() {
   try { renderCharts(await api('history')); } catch (e) {}

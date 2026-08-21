@@ -19,6 +19,10 @@ _LOG = logging.getLogger(__name__)
 
 WWW = os.path.join(os.path.dirname(__file__), "www")
 
+# Stands in for a stored secret so it never leaves the process. Posted back
+# unchanged by the form, and dropped rather than written.
+KEEP_SECRET = "•" * 8
+
 
 def _json_error(message: str, status: int = 400) -> web.Response:
     return web.json_response({"ok": False, "error": message}, status=status)
@@ -43,6 +47,11 @@ class WebUI:
 
     async def get_settings(self, request):
         values = {s.key: getattr(self.service.opts, s.key) for s in optionspec.SPECS}
+        # Never serve secrets back out. The form posts the placeholder straight
+        # back when the field is untouched, which we treat as "leave it alone".
+        for spec in optionspec.SPECS:
+            if spec.type == "password" and values.get(spec.key):
+                values[spec.key] = KEEP_SECRET
         return web.json_response({
             "specs": optionspec.as_json(),
             "values": values,
@@ -60,6 +69,8 @@ class WebUI:
         for key, value in raw.items():
             if key not in optionspec.BY_KEY:
                 continue
+            if optionspec.BY_KEY[key].type == "password" and value == KEEP_SECRET:
+                continue  # untouched - keep whatever is already stored
             try:
                 changes[key] = optionspec.coerce(key, value)
             except ValueError as e:

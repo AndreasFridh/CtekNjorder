@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -23,6 +24,13 @@ _LOG = logging.getLogger(__name__)
 
 # Retained configuration topics for any charger, used before we know the serial.
 DISCOVERY_TOPIC = "ctek/ng-v2/client/+/configuration"
+
+# The discovered serial is taken straight out of a topic name, and the charger's
+# broker accepts anonymous publishes from anywhere on the network. Anyone on the
+# LAN can therefore retain a topic containing whatever they like. Constrain it to
+# the shape of a real CTEK serial before we adopt it, build topics from it, or
+# hand it to the web UI.
+SERIAL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{3,63}$")
 
 
 class ChargerState:
@@ -144,6 +152,9 @@ class CtekClient:
 
     def _bind(self, serial: str) -> None:
         """Lock onto a charger serial and subscribe to its topics."""
+        if not SERIAL_RE.match(serial or ""):
+            _LOG.warning("Ignoring implausible charger serial from the broker: %r", serial)
+            return
         if self.topics and self.topics.charger == serial:
             return
         self.charger_serial = serial

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.0
+
+Security and UX review.
+
+- **Fixed a stored XSS.** The charger serial is parsed out of an MQTT topic
+  name, and the charger's broker accepts anonymous publishes from anywhere on
+  the LAN — so the serial was attacker-controlled, and it was rendered into
+  the dashboard unescaped. Serials are now validated before being adopted, and
+  every value the page interpolates is escaped at the point of use.
+- **Stopped serving the MQTT password back out.** `GET /api/settings` returned
+  `charger_password` in cleartext. It now returns a placeholder, and posting
+  the placeholder back leaves the stored secret alone.
+- **The dashboard now says when it has lost contact with the add-on.** It used
+  to freeze on the last reading, which looks identical to a healthy system —
+  the worst failure mode for a page whose job is showing live current.
+- **Stopped inventing charger state names.** Only `State: 2` has ever been
+  observed, so the other labels were guesses shown as fact. Unknown states now
+  display their number.
+- Pinned aiohttp forward to 3.10.11.
+- Added `SECURITY.md` and `tests/test_security.py`.
+
 ## 0.5.0
 
 - **Safety fix.** When the charger's telemetry went stale the balancer assumed

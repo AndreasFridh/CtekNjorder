@@ -7,6 +7,10 @@ against real-time current readings from Home Assistant.
 The MQTT protocol between the Njord GO and the Nanogrid Air is not documented by
 CTEK. It was reverse-engineered from live captures — see **[PROTOCOL.md](PROTOCOL.md)**.
 
+> **The charger's MQTT broker has no authentication.** Anyone who can reach it
+> on your network can command your charging current. Keep it off untrusted
+> network segments — see [SECURITY.md](SECURITY.md).
+
 ## Status
 
 | Piece | State |
