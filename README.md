@@ -18,6 +18,28 @@ CTEK. It was reverse-engineered from live captures — see **[PROTOCOL.md](PROTO
 | Live control (`dry_run: false`) | Verified against the simulator; **not yet against the real charger** |
 | Home Assistant data source | Done — **needs your entity IDs** |
 
+## Install
+
+This is a Home Assistant **add-on repository**. Add it once, then install the
+add-on from the store.
+
+1. In Home Assistant: **Settings → Add-ons → Add-on Store**
+2. Top-right **⋮ → Repositories**
+3. Paste `https://github.com/AndreasFridh/CtekNjorder` and click **Add**
+4. Close the dialog; **CTEK Njord Load Balancer** appears in the store
+5. **Install**, then set `main_fuse` and `current_entities` on the Configuration tab
+6. **Start**
+
+Requires Home Assistant OS or Supervised — the add-on store is not available on
+Core or Container installs.
+
+The add-on ships with `dry_run: true`, so it will log the setpoints it would
+send without sending any. Full setup and options are in
+[ctek_njord_sim/DOCS.md](ctek_njord_sim/DOCS.md).
+
+> **Block the Nanogrid Air before turning `dry_run` off.** Two controllers
+> publishing to the same topic will fight over the charging current.
+
 ## How it works
 
 ```
