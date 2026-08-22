@@ -68,6 +68,20 @@ class WebUI:
             minutes = 30
         return web.json_response(self.service.history_series(minutes))
 
+    async def sessions(self, request):
+        try:
+            limit = max(1, min(int(request.query.get("limit", 200)), 500))
+        except ValueError:
+            limit = 200
+        charger = request.query.get("charger") or None
+        log = self.service.session_log
+        return web.json_response({
+            "sessions": log.list(limit, charger),
+            "summary": log.summary(),
+            "currency": self.service.opts.currency,
+            "chargers": [{"id": c.id, "name": c.name} for c in self.service.clients],
+        })
+
     async def get_settings(self, request):
         values = {s.key: getattr(self.service.opts, s.key) for s in optionspec.SPECS}
         # Never serve secrets back out. The form posts the placeholder straight
@@ -191,6 +205,7 @@ class WebUI:
         app.router.add_get("/", self.index)
         app.router.add_get("/api/state", self.state)
         app.router.add_get("/api/history", self.history)
+        app.router.add_get("/api/sessions", self.sessions)
         app.router.add_get("/api/settings", self.get_settings)
         app.router.add_post("/api/settings", self.post_settings)
         app.router.add_get("/api/entities", self.entities)

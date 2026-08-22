@@ -1,4 +1,4 @@
-# CTEK Njord Load Balancer
+# CtekNjorder
 
 A Home Assistant add-on that replaces the **CTEK Nanogrid Air**. It impersonates
 the adapter on the charger's own MQTT broker and load-balances EV charging
@@ -28,6 +28,7 @@ CTEK. It was reverse-engineered from live captures — see **[PROTOCOL.md](PROTO
 | Web UI | Done — Ingress dashboard and full settings editor, sidebar-capable |
 | Price-aware charging | Done — charge-enable gate and per-session cost |
 | Link monitoring | Done — round-trip time and loss per charger |
+| Session log | Done — browsable, persisted, with cost and timings |
 
 ## Install
 
@@ -37,7 +38,7 @@ add-on from the store.
 1. In Home Assistant: **Settings → Add-ons → Add-on Store**
 2. Top-right **⋮ → Repositories**
 3. Paste `https://github.com/AndreasFridh/CtekNjorder` and click **Add**
-4. Close the dialog; **CTEK Njord Load Balancer** appears in the store
+4. Close the dialog; **CtekNjorder** appears in the store
 5. **Install**, then **Start**
 6. **Open Web UI**, and turn on **Show in sidebar** to keep it handy
 7. Set your main fuse and meter entities on the **Settings** tab

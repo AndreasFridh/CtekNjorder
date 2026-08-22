@@ -125,14 +125,14 @@ def build_logo(art: Image.Image, size: tuple[int, int]) -> Image.Image:
     plate.alpha_composite(scaled, (int(h * 0.16), (h - scaled.height) // 2))
 
     try:
-        big = ImageFont.truetype("C:/Windows/Fonts/segoeuib.ttf", int(h * 0.24))
+        big = ImageFont.truetype("C:/Windows/Fonts/segoeuib.ttf", int(h * 0.21))
         small = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", int(h * 0.135))
     except OSError:
         big = small = ImageFont.load_default()
 
     x = int(h * 0.16) + scaled.width + int(w * 0.06)
-    d.text((x, h * 0.33), "Njord", font=big, fill=(24, 26, 30))
-    d.text((x, h * 0.56), "Load Balancer", font=small, fill=(108, 116, 126))
+    d.text((x, h * 0.30), "CtekNjorder", font=big, fill=(24, 26, 30))
+    d.text((x, h * 0.58), "EV load balancing", font=small, fill=(108, 116, 126))
     return plate
 
 

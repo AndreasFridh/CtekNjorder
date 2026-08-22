@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CTEK Njord Load Balancer</title>
+<title>CtekNjorder</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213.5%22 font-size=%2214%22>&#9889;</text></svg>">
 <style>
 :root{
@@ -117,6 +117,17 @@ canvas{width:100%;height:190px;display:block}
   font-variant-numeric:tabular-nums}
 .chg-big span{font-size:12px;color:var(--muted)}
 .chg-note{margin-top:6px;font-size:12px;color:var(--muted)}
+.tablewrap{overflow-x:auto}
+table.ses{width:100%;border-collapse:collapse;font-size:13px}
+table.ses th{text-align:left;font-size:11px;text-transform:uppercase;
+  letter-spacing:.04em;color:var(--muted);font-weight:600;padding:0 10px 8px 0;
+  white-space:nowrap}
+table.ses td{padding:9px 10px 9px 0;border-top:1px solid var(--line);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+table.ses td.name{font-variant-numeric:normal;font-weight:600}
+table.ses td.when{font-variant-numeric:normal;color:var(--muted)}
+table.ses tr:hover td{background:var(--bg)}
+table.ses .paused{color:var(--warn)}
 .chg-sub code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
 .chg-bar{height:7px;background:var(--free);border-radius:4px;margin-top:8px;overflow:hidden}
 .chg-bar i{display:block;height:100%;background:var(--car);transition:width .4s ease}
@@ -159,7 +170,7 @@ body.offline .card,body.offline .tabs{opacity:.5;filter:grayscale(.6)}
 <div class="wrap">
 
 <header>
-  <h1>CTEK Njord Load Balancer</h1>
+  <h1>CtekNjorder</h1>
   <div class="badges">
     <div class="badge"><span class="dot" id="d-charger"></span><span id="d-charger-t">Chargers</span></div>
     <div class="badge"><span class="dot" id="d-hass"></span>Home Assistant</div>
@@ -170,6 +181,7 @@ body.offline .card,body.offline .tabs{opacity:.5;filter:grayscale(.6)}
 
 <div class="tabs">
   <button class="tab sel" data-tab="dash">Dashboard</button>
+  <button class="tab" data-tab="sessions">Sessions</button>
   <button class="tab" data-tab="set">Settings</button>
 </div>
 
@@ -242,6 +254,31 @@ body.offline .card,body.offline .tabs{opacity:.5;filter:grayscale(.6)}
   </div>
 </section>
 
+<!-- ============ SESSIONS ============ -->
+<section id="tab-sessions" class="hide">
+  <div class="card">
+    <div class="chead">
+      <h2>Totals</h2>
+      <div class="range" id="ses-range">
+        <button data-range="week">7 days</button>
+        <button data-range="month" class="sel">30 days</button>
+        <button data-range="all">All</button>
+      </div>
+    </div>
+    <div class="costnow" id="ses-totals" style="margin-top:0;border-top:0;padding-top:0"></div>
+  </div>
+
+  <div class="card">
+    <div class="chead">
+      <h2>Charging sessions</h2>
+      <select id="ses-charger" style="width:auto;margin-left:auto"></select>
+    </div>
+    <div class="tablewrap"><table class="ses" id="ses-table"></table></div>
+    <p class="muted" id="ses-empty" style="display:none">
+      No sessions recorded yet. One appears here each time a car finishes charging.</p>
+  </div>
+</section>
+
 <!-- ============ SETTINGS ============ -->
 <section id="tab-set" class="hide">
   <div id="set-banner" role="status" aria-live="polite"></div>
@@ -261,7 +298,7 @@ body.offline .card,body.offline .tabs{opacity:.5;filter:grayscale(.6)}
 </section>
 
 <footer>
-  CTEK Njord Load Balancer &middot; &copy; 2026 Andreas Fridh &middot;
+  CtekNjorder &middot; &copy; 2026 Andreas Fridh &middot;
   <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">AGPL-3.0</a>
   &middot;
   <a href="https://github.com/AndreasFridh/CtekNjorder" target="_blank" rel="noopener">Source code</a>
@@ -298,8 +335,10 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   if (t.dataset.tab !== 'set') setDirty(false);
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('sel', x === t));
   $('#tab-dash').classList.toggle('hide', t.dataset.tab !== 'dash');
+  $('#tab-sessions').classList.toggle('hide', t.dataset.tab !== 'sessions');
   $('#tab-set').classList.toggle('hide', t.dataset.tab !== 'set');
   if (t.dataset.tab === 'set' && !SPECS.length) loadSettings();
+  if (t.dataset.tab === 'sessions') loadSessions();
 });
 
 /* ---------- dashboard ---------- */
@@ -856,6 +895,96 @@ $('#restart').onclick = async () => {
   await fetch('./api/restart', { method: 'POST', headers: POST_HEADERS }).catch(() => {});
 };
 
+/* ---------- sessions ---------- */
+let SES = null, SES_RANGE = 'month', SES_CHARGER = '';
+
+const pad2 = n => String(n).padStart(2, '0');
+
+function clock(epoch) {
+  const d = new Date(epoch * 1000);
+  return pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+}
+
+function day(epoch) {
+  const d = new Date(epoch * 1000), now = new Date();
+  const same = d.toDateString() === now.toDateString();
+  const yest = new Date(now.getTime() - 86400000).toDateString() === d.toDateString();
+  if (same) return 'Today';
+  if (yest) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+function hoursMins(seconds) {
+  const m = Math.round(seconds / 60);
+  return m >= 60 ? Math.floor(m / 60) + 'h ' + pad2(m % 60) + 'm' : m + ' min';
+}
+
+document.querySelectorAll('#ses-range button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#ses-range button').forEach(x => x.classList.toggle('sel', x === b));
+  SES_RANGE = b.dataset.range;
+  if (SES) renderSessions(SES);
+});
+
+async function loadSessions() {
+  try { renderSessions(await api('sessions?limit=300')); }
+  catch (e) { console.error('sessions failed', e); }
+}
+
+function renderSessions(data) {
+  SES = data;
+  const cur = data.currency || '';
+  const fmt = v => v == null ? '\u2013' : v.toFixed(2) + (cur ? ' ' + esc(cur) : '');
+
+  const t = data.summary[SES_RANGE] || data.summary.all;
+  const cell = (k, v) => '<div><span>' + k + '</span><b>' + v + '</b></div>';
+  $('#ses-totals').innerHTML =
+    cell('Sessions', t.sessions) +
+    cell('Energy', t.energy_kwh.toFixed(1) + ' kWh') +
+    cell('Cost', fmt(t.cost)) +
+    cell('Charging time', t.hours + ' h') +
+    cell('Average price', t.avg_price == null ? '\u2013' : fmt(t.avg_price) + '/kWh');
+
+  const pick = $('#ses-charger');
+  if (pick.options.length !== (data.chargers.length + 1)) {
+    pick.innerHTML = '<option value="">All chargers</option>' +
+      data.chargers.map(c => '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>').join('');
+    pick.value = SES_CHARGER;
+    pick.onchange = () => { SES_CHARGER = pick.value; renderSessions(SES); };
+  }
+
+  const rows = (data.sessions || [])
+    .filter(r => !SES_CHARGER || r.charger === SES_CHARGER);
+
+  $('#ses-empty').style.display = rows.length ? 'none' : '';
+  if (!rows.length) { $('#ses-table').innerHTML = ''; return; }
+
+  const many = data.chargers.length > 1;
+  const head = '<tr>' +
+    (many ? '<th>Charger</th>' : '') +
+    '<th>Day</th><th>Start</th><th>End</th><th>Duration</th>' +
+    '<th>Charging</th><th>Energy</th><th>Cost</th><th>Avg price</th><th>Peak</th></tr>';
+
+  const body = rows.map(r => {
+    // Elapsed and charging time differ whenever load balancing paused the car,
+    // and that gap is worth seeing rather than hiding.
+    const paused = r.duration_s - r.charging_s > 120;
+    return '<tr>' +
+      (many ? '<td class="name">' + esc(r.name) + '</td>' : '') +
+      '<td class="when">' + day(r.started) + '</td>' +
+      '<td>' + clock(r.started) + '</td>' +
+      '<td>' + clock(r.ended) + '</td>' +
+      '<td>' + hoursMins(r.duration_s) + '</td>' +
+      '<td' + (paused ? ' class="paused"' : '') + '>' + hoursMins(r.charging_s) + '</td>' +
+      '<td>' + r.energy_kwh.toFixed(2) + ' kWh</td>' +
+      '<td>' + fmt(r.cost) + '</td>' +
+      '<td>' + (r.avg_price == null ? '\u2013' : fmt(r.avg_price)) + '</td>' +
+      '<td>' + r.peak_current.toFixed(1) + ' A</td>' +
+    '</tr>';
+  }).join('');
+
+  $('#ses-table').innerHTML = head + body;
+}
+
 /* ---------- polling ---------- */
 let missed = 0;
 async function tick() {
@@ -882,6 +1011,9 @@ async function tickHistory() {
 tick(); tickHistory();
 setInterval(tick, 1000);
 setInterval(tickHistory, 5000);
+setInterval(() => {
+  if (!$('#tab-sessions').classList.contains('hide')) loadSessions();
+}, 30000);
 // Redraw from the cached series so a resize costs no request.
 addEventListener('resize', () => { if (HIST) renderCharts(HIST); });
 </script>
