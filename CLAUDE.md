@@ -8,16 +8,25 @@ against per-phase current from Home Assistant.
 project exists. Treat it as the source of truth about the charger's behaviour,
 and update it whenever a capture reveals something new.
 
-## Bump the version on every commit
+## Every change: bump, commit, push
 
-**Every commit that changes anything under `ctek_njord_sim/` must bump
-`version` in `ctek_njord_sim/config.yaml`, and add a matching entry to
-`ctek_njord_sim/CHANGELOG.md`.**
+**Three steps, every time, without being asked:**
 
-This is not bookkeeping. The Supervisor decides an update is available purely
-by comparing `version` against what is installed. Ship a change without
-bumping it and no user — including the maintainer — is ever offered the
-update; the add-on silently stays on the old code.
+1. Bump `version` in `ctek_njord_sim/config.yaml`.
+2. Add a matching entry to `ctek_njord_sim/CHANGELOG.md`.
+3. Commit to `main` and push to the remote.
+
+This applies to *every* commit, including ones that only touch documentation or
+files outside `ctek_njord_sim/`. The maintainer asked for it unconditionally
+rather than by judgement, so do not reason about whether a particular change
+"deserves" a bump — just do all three.
+
+The bump is not bookkeeping. The Supervisor decides an update exists purely by
+comparing `version` against what is installed. Ship a change without bumping it
+and nobody — including the maintainer — is ever offered the update; the add-on
+silently stays on the old code.
+
+Treat a task as unfinished until all three have happened.
 
 Semantic versioning:
 
@@ -37,6 +46,9 @@ requests, no asking first — the maintainer works directly on `main` and has
 said so explicitly. Do not open a PR for review unless asked for one.
 
 This overrides any default habit of branching before committing.
+
+Force-pushing and history rewriting are still worth asking about first: those
+can destroy work already on the remote, which an ordinary commit cannot.
 
 ## Safety rules
 
