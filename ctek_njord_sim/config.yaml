@@ -1,5 +1,5 @@
 name: CTEK Njord Load Balancer
-version: "0.6.0"
+version: "0.7.0"
 slug: ctek_njord_sim
 description: >-
   Replaces the CTEK Nanogrid Air. Impersonates the adapter on the charger's own
@@ -48,6 +48,7 @@ options:
   control_interval: 15
   meter_interval: 10
   dry_run: true
+  restrict_api: true
   log_level: info
 
 schema:
@@ -75,4 +76,5 @@ schema:
   control_interval: float(1,60)
   meter_interval: float(1,60)
   dry_run: bool
+  restrict_api: bool
   log_level: list(trace|debug|info|warning|error)

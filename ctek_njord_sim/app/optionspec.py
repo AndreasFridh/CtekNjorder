@@ -101,6 +101,11 @@ SPECS: tuple[Spec, ...] = (
          help="How often meter data is mirrored to the charger."),
     Spec("log_level", "Log level", "select", "Behaviour",
          choices=("trace", "debug", "info", "warning", "error")),
+    Spec("restrict_api", "Restrict API to Ingress", "bool", "Behaviour",
+         restart=True, advanced=True,
+         help="Only accept web requests proxied by Home Assistant. Turn off "
+              "only if the UI stops loading; the log names the rejected "
+              "address so you can see what to allow."),
 )
 
 BY_KEY = {s.key: s for s in SPECS}

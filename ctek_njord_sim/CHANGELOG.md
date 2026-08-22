@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0
+
+Closes the remaining items from the security and UX review.
+
+- **The API now only answers the Ingress proxy.** Previously anything on the
+  Supervisor's Docker network could change the charging limits or restart the
+  add-on without authenticating. Mutating calls additionally require a header
+  that a cross-origin form cannot set, so a malicious page cannot ride an
+  Ingress session. `restrict_api` turns this off from the add-on's
+  Configuration tab, which keeps working even if the check itself is what is
+  stopping the UI loading.
+- Settings warn before you switch tabs with unsaved changes.
+- The allowed current is shown as the integer it is, not `6.0 A`.
+- Banners announce themselves to screen readers.
+- Added a favicon.
+
 ## 0.6.0
 
 Security and UX review.

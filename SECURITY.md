@@ -42,28 +42,24 @@ charger, and a serial already bound cannot be replaced. See
 The UI does **no authentication of its own**. It relies on Home Assistant
 Ingress, which authenticates the user before proxying.
 
-### Network exposure — accepted risk
+### Network exposure
 
-`config.yaml` deliberately declares no `ports:`, so the UI is **not** reachable
-from your LAN. It is reachable from the Supervisor's internal Docker network,
-which means another add-on running on the same machine could call the API
-without authentication and change the charging limits or restart this add-on.
+`config.yaml` declares no `ports:`, so the UI is not reachable from your LAN.
 
-This is not fixed, and the reasoning is worth stating: the available mitigation
-is to allowlist the Supervisor's internal IP, which varies between installs and
-would risk locking the owner out of their own UI. The Home Assistant add-on
-model already treats the internal network as trusted, and every add-on you
-install can do considerably worse than adjust a charging current. Segmenting
-against your own add-ons is the wrong layer to solve this at.
+It is reachable from the Supervisor's internal Docker network, so `/api/*`
+accepts requests only from the Ingress proxy (the Supervisor's own address) or
+from inside this container. Another add-on on the same network is refused, and
+the refusal is logged with the address that was rejected.
 
-If that trade does not suit you, do not install untrusted add-ons alongside
-this one.
+`restrict_api` disables the check. It is set from the add-on's **Configuration**
+tab in Home Assistant rather than from this UI, so it still works if the check
+is itself what is preventing the UI from loading.
 
 ### Cross-site request forgery
 
-Mutating endpoints require a JSON body, which cross-origin forms cannot send
-without a CORS preflight this server does not answer. Ingress URLs also carry
-a per-session token. No separate CSRF token is used.
+Mutating endpoints require the `X-Ctek-UI` header, which a cross-origin form
+cannot set and which triggers a CORS preflight this server does not answer.
+Ingress URLs also carry a per-session token.
 
 ### Output escaping
 

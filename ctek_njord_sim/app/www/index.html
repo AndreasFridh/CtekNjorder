@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CTEK Njord Load Balancer</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213.5%22 font-size=%2214%22>&#9889;</text></svg>">
 <style>
 :root{
   --bg:#f5f6f8; --card:#fff; --fg:#17191c; --muted:#6b7280; --line:#e3e6ea;
@@ -80,6 +81,8 @@ canvas{width:100%;height:190px;display:block}
 .qcalc b{color:var(--fg);font-variant-numeric:tabular-nums}
 .qmsg.bad{color:var(--bad)}
 .qmsg.ok{color:var(--ok)}
+.dirty{font-size:12px;color:var(--warn);font-weight:600}
+.qhint{grid-column:1/-1;font-size:12px;color:var(--muted)}
 .grp{margin-bottom:22px}
 .row{display:grid;grid-template-columns:210px 1fr;gap:14px;align-items:start;
   padding:11px 0;border-top:1px solid var(--line)}
@@ -118,7 +121,7 @@ body.offline .card,body.offline .tabs{opacity:.5;filter:grayscale(.6)}
   </div>
 </header>
 
-<div id="banners"></div>
+<div id="banners" role="status" aria-live="polite"></div>
 
 <div class="tabs">
   <button class="tab sel" data-tab="dash">Dashboard</button>
@@ -138,7 +141,7 @@ body.offline .card,body.offline .tabs{opacity:.5;filter:grayscale(.6)}
   </div>
 
   <div class="card">
-    <h2>Limits &mdash; change these any time, they apply at once</h2>
+    <h2>Limits</h2>
     <div class="quick">
       <label>Main fuse
         <div class="unit"><input type="number" id="q_main_fuse" min="6" max="125" step="1"><span>A</span></div>
@@ -150,6 +153,7 @@ body.offline .card,body.offline .tabs{opacity:.5;filter:grayscale(.6)}
         <div class="unit"><input type="number" id="q_safety_margin" min="0" max="10" step="0.5"><span>A</span></div>
       </label>
       <div class="qcalc" id="qcalc"></div>
+      <div class="qhint">Changes apply to the running balancer straight away.</div>
       <div class="qmsg" id="qmsg"></div>
     </div>
   </div>
@@ -192,7 +196,7 @@ body.offline .card,body.offline .tabs{opacity:.5;filter:grayscale(.6)}
 
 <!-- ============ SETTINGS ============ -->
 <section id="tab-set" class="hide">
-  <div id="set-banner"></div>
+  <div id="set-banner" role="status" aria-live="polite"></div>
   <div class="card">
     <div style="display:flex;align-items:center;margin-bottom:14px">
       <h2 style="margin:0">Configuration</h2>
@@ -202,6 +206,7 @@ body.offline .card,body.offline .tabs{opacity:.5;filter:grayscale(.6)}
     <div class="actions">
       <button class="act" id="save">Save</button>
       <button class="act ghost" id="restart">Restart add-on</button>
+      <span id="dirty" class="dirty"></span>
       <span id="save-msg" class="muted"></span>
     </div>
   </div>
@@ -216,12 +221,26 @@ const api = p => fetch('./api/' + p).then(r => r.json());
 // the charger serial comes out of an MQTT topic on a broker that accepts
 // anonymous publishes, and entity names come from Home Assistant. Escape at
 // every interpolation rather than trying to remember which values are safe.
+// The server refuses mutating calls without this header, which a cross-origin
+// form cannot set - so a malicious page cannot ride an Ingress session.
+const POST_HEADERS = { 'Content-Type': 'application/json', 'X-Ctek-UI': '1' };
+
 const esc = v => String(v ?? '').replace(/[&<>"']/g,
   c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let SPECS = [], VALUES = {}, ENTS = null, showAdv = false, LAST = null;
 
 /* ---------- tabs ---------- */
+let DIRTY = false;
+function setDirty(v) {
+  DIRTY = v;
+  const el = $('#dirty');
+  if (el) el.textContent = v ? 'Unsaved changes' : '';
+}
+
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  if (DIRTY && t.dataset.tab !== 'set' &&
+      !confirm('You have unsaved settings. Leave without saving?')) return;
+  if (t.dataset.tab !== 'set') setDirty(false);
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('sel', x === t));
   $('#tab-dash').classList.toggle('hide', t.dataset.tab !== 'dash');
   $('#tab-set').classList.toggle('hide', t.dataset.tab !== 'set');
@@ -312,7 +331,7 @@ async function saveQuick(key, el) {
   msg.className = 'qmsg'; msg.textContent = 'Applying…';
   try {
     const r = await fetch('./api/settings', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: POST_HEADERS,
       body: JSON.stringify({ values: { [key]: el.value } }),
     }).then(x => x.json());
     if (!r.ok) {
@@ -459,7 +478,8 @@ function renderCharts(raw) {
     { label: 'Used', color: css('--car'), values: used, width: 1.6 },
   ], { n, spanMin, floor: 16 });
   legend($('#leg-charge'), [
-    { label: 'Allowed', color: css('--ok'), value: amps(lastOf(h.setpoint)) },
+    { label: 'Allowed', color: css('--ok'),
+      value: lastOf(h.setpoint) == null ? '–' : lastOf(h.setpoint) + ' A' },
     { label: 'Used (peak phase)', color: css('--car'), value: amps(lastOf(used)) },
   ]);
 }
@@ -517,6 +537,7 @@ function renderForm() {
       `<option value="${esc(e.entity_id)}">${esc(e.name)} — ${esc(e.state)} ${esc(e.unit)}</option>`).join('') +
     '</datalist>').join('');
   $('#form').innerHTML = out;
+  $('#form').addEventListener('input', () => setDirty(true), { once: true });
 }
 
 async function loadSettings() {
@@ -561,7 +582,7 @@ $('#save').onclick = async () => {
   $('#save-msg').textContent = 'Saving…';
   try {
     const r = await fetch('./api/settings', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: POST_HEADERS,
       body: JSON.stringify({ values: collect() }),
     }).then(x => x.json());
 
@@ -575,6 +596,7 @@ $('#save').onclick = async () => {
       $('#set-banner').innerHTML = banner(r.needs_restart.length ? 'warn' : 'ok',
         esc(msg + (r.warning ? ' ' + r.warning : '')));
       $('#save-msg').textContent = '';
+      setDirty(false);
       const s = await api('settings'); VALUES = s.values; renderForm();
     }
   } catch (e) {
@@ -586,7 +608,7 @@ $('#save').onclick = async () => {
 $('#restart').onclick = async () => {
   if (!confirm('Restart the add-on? Charging control pauses for a few seconds.')) return;
   $('#save-msg').textContent = 'Restarting…';
-  await fetch('./api/restart', { method: 'POST' }).catch(() => {});
+  await fetch('./api/restart', { method: 'POST', headers: POST_HEADERS }).catch(() => {});
 };
 
 /* ---------- polling ---------- */

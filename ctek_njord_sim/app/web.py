@@ -24,6 +24,18 @@ WWW = os.path.join(os.path.dirname(__file__), "www")
 KEEP_SECRET = "•" * 8
 
 
+# Home Assistant proxies Ingress traffic from the Supervisor itself, which sits
+# at a fixed address on the internal network. Other add-ons share that network
+# but have their own addresses, so this does distinguish "the authenticated user
+# via Ingress" from "some other container on the same host".
+SUPERVISOR_IP = "172.30.32.2"
+LOOPBACK = ("127.0.0.1", "::1")
+
+# Mutating calls must carry a header that a cross-origin form cannot set, so a
+# malicious page cannot ride the user's Ingress session.
+CSRF_HEADER = "X-Ctek-UI"
+
+
 def _json_error(message: str, status: int = 400) -> web.Response:
     return web.json_response({"ok": False, "error": message}, status=status)
 
@@ -130,8 +142,41 @@ class WebUI:
 
     # ---------- lifecycle ----------
 
+    @web.middleware
+    async def guard(self, request, handler):
+        """
+        Keep the API to the Ingress path.
+
+        The UI does no authentication of its own because Home Assistant does it
+        first - but that only holds for traffic that actually came through
+        Ingress. Anything else on the Supervisor's Docker network could
+        otherwise change the charging limits or restart the add-on unasked.
+
+        Escape hatch: `restrict_api` can be turned off from the add-on's
+        Configuration tab in Home Assistant, which keeps working even if this
+        check is what is stopping the UI from loading.
+        """
+        if not request.path.startswith("/api/") or not self.service.opts.restrict_api:
+            return await handler(request)
+
+        peer = request.remote
+        if peer not in LOOPBACK and peer != SUPERVISOR_IP:
+            _LOG.warning(
+                "Refused %s %s from %s - not the Ingress proxy. If this is your "
+                "own access, add it or set restrict_api off in the add-on "
+                "configuration.", request.method, request.path, peer,
+            )
+            return _json_error("Only reachable through Home Assistant Ingress", 403)
+
+        if request.method != "GET" and request.headers.get(CSRF_HEADER) != "1":
+            _LOG.warning("Refused %s %s: missing %s header",
+                         request.method, request.path, CSRF_HEADER)
+            return _json_error("Missing UI header", 403)
+
+        return await handler(request)
+
     def build(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[self.guard])
         app.router.add_get("/", self.index)
         app.router.add_get("/api/state", self.state)
         app.router.add_get("/api/history", self.history)
