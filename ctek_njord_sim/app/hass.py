@@ -48,6 +48,7 @@ class HassClient:
         self.raw: dict[str, str] = {}
         self.updated_at: dict[str, float] = {}
         self.connected = False
+        self.disconnected_since: float | None = time.time()
         self.units: dict[str, str] = {}
         self._msg_id = 0
 
@@ -58,9 +59,41 @@ class HassClient:
         """The entity's state as Home Assistant reports it, unparsed."""
         return self.raw.get(entity_id)
 
+    UNUSABLE = ("unavailable", "unknown", "none", "")
+
     def age(self, entity_id: str) -> float:
+        """How long since this entity last told us anything. For display."""
         ts = self.updated_at.get(entity_id)
         return float("inf") if ts is None else time.time() - ts
+
+    def feed_age(self, entity_ids: list[str]) -> float:
+        """
+        How out of date our picture is, for control purposes.
+
+        Not the same question as "how long since the value changed", and
+        confusing the two is a bug: Home Assistant does not send a
+        state_changed event when a sensor re-reports the value it already had,
+        so a house sitting at a steady load produces no events at all. Judging
+        freshness by the last event then declares the best-behaved possible
+        meter stale, and falls back to the minimum current while the data is
+        perfectly good.
+
+        In a push subscription the connection is the freshness signal. While
+        the socket is up and every entity holds a usable value, our picture is
+        exactly as current as Home Assistant's own - it would have told us if
+        anything had changed. What genuinely makes it stale is the socket
+        dropping, or an entity going unavailable.
+        """
+        if not entity_ids:
+            return float("inf")
+        for eid in entity_ids:
+            if eid not in self.values:
+                return float("inf")                    # never seen at all
+            if str(self.raw.get(eid, "")).strip().lower() in self.UNUSABLE:
+                return float("inf")                    # reporting nothing usable
+        if self.connected:
+            return 0.0
+        return time.time() - (self.disconnected_since or time.time())
 
     def newest_age(self, entity_ids: list[str]) -> float:
         """Age of the STALEST of the given entities - that's what gates safety."""
@@ -108,6 +141,8 @@ class HassClient:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
+                if self.connected:
+                    self.disconnected_since = time.time()
                 self.connected = False
                 _LOG.warning("Home Assistant connection lost (%s); retry in %.0fs", e, backoff)
                 await asyncio.sleep(backoff)
@@ -137,6 +172,7 @@ class HassClient:
                 )
 
                 self.connected = True
+                self.disconnected_since = None
                 async for raw in ws:
                     if raw.type != aiohttp.WSMsgType.TEXT:
                         continue
@@ -150,7 +186,9 @@ class HassClient:
                             unit = (st.get("attributes") or {}).get("unit_of_measurement")
                             if eid in self.entity_ids and unit:
                                 self.units[eid] = str(unit)
-                        missing = [e for e in self.entity_ids if e not in self.values]
+                        # Check raw, not values: a charge-enable switch reports
+                        # "on", which is present but not a number.
+                        missing = [e for e in self.entity_ids if e not in self.raw]
                         if missing:
                             _LOG.warning(
                                 "These entities are not present in Home Assistant: %s",
@@ -161,4 +199,6 @@ class HassClient:
                         new = data.get("new_state")
                         if new:
                             self._record(data.get("entity_id"), new.get("state"))
+        if self.connected:
+            self.disconnected_since = time.time()
         self.connected = False

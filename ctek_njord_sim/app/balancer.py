@@ -175,7 +175,14 @@ class Balancer:
         if not house_current or house_age > cfg.stale_timeout:
             why = "no house data" if not house_current else f"house data {house_age:.0f}s old"
             self._raise_pending_since = None
-            return self._commit(now, cfg.fallback_current, f"FALLBACK: {why}")
+            # Carry the fallback as headroom, not just as a setpoint. The
+            # allocator divides headroom, so returning none of it would hand
+            # every charger 0 A and the configured fallback would never reach
+            # one - the setting would look present and do nothing.
+            return self._commit(
+                now, cfg.fallback_current, f"FALLBACK: {why}",
+                [float(cfg.fallback_current)] * 3, [],
+            )
 
         rot = PHASE_ROTATIONS.get(cfg.phase_rotation, (0, 1, 2))
         charger_current = charger_current or [0.0, 0.0, 0.0]

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.10.1
+
+Two fixes, both reported as "house data NNs old" while the meter was fine.
+
+- **A steady house was mistaken for a dead meter.** Home Assistant does not
+  send an event when a sensor re-reports the value it already had, so a house
+  holding a constant load produces no events at all - and freshness was being
+  judged by the last event. The best-behaved possible meter was the one most
+  likely to be declared stale. Freshness now follows the connection and whether
+  each entity holds a usable value, which is what actually determines whether
+  our picture is current.
+- **The fallback current never reached a charger.** Falling back reported a
+  setpoint but no headroom, and the allocator divides headroom - so every
+  charger got 0 A and `fallback_current` looked set while doing nothing.
+- The dashboard now says "meter last changed" rather than "meter age", since a
+  reading that has not changed in an hour is not necessarily an old one.
+
 ## 0.10.0
 
 Everything that was on the todo list, plus a scrub of the repository.

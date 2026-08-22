@@ -49,6 +49,7 @@ class World:
         self.cars: dict[str, list[float]] = {}     # keyed by broker+serial
         self.gate = "on"
         self.price = 2.45
+        self.steady = False
         self.start = time.time()
         self._label = None
 
@@ -58,6 +59,8 @@ class World:
         return [sum(v[p] for v in self.cars.values()) for p in range(3)]
 
     def baseline(self) -> float:
+        if self.steady:
+            return 4.0
         t = time.time() - self.start
         for until, amps, label in PROFILE:
             if t < until:
@@ -69,7 +72,12 @@ class World:
 
     def house(self) -> list[float]:
         b = self.baseline()
-        return [round(b + c, 1) for c in self.car]
+        vals = [b + c for c in self.car]
+        if self.steady:
+            # Whole amps, so a settled house reports the same number every
+            # time and Home Assistant stops sending events entirely.
+            return [float(round(v)) for v in vals]
+        return [round(v, 1) for v in vals]
 
 
 def start_mqtt(world: World, host: str, port: int) -> None:
@@ -100,19 +108,29 @@ def make_app(world: World) -> web.Application:
         subscribed = False
         push_task = None
 
+        # only-on-change: Home Assistant does NOT emit state_changed when a
+        # sensor re-reports the value it already had. Pushing regardless made
+        # this mock kinder than the real thing and hid a bug where a steady
+        # house looked like a dead meter.
+        sent: dict[str, str] = {}
+
         async def push():
-            """Emit state_changed events, as a real P1 integration would."""
+            """Emit state_changed events the way Home Assistant really does."""
             while True:
                 await asyncio.sleep(2.0)
                 extra = [(GATE, world.gate), (PRICE, world.price)]
                 for eid, val in list(zip(ENTITIES, world.house())) + extra:
+                    text = str(val)
+                    if sent.get(eid) == text:
+                        continue          # unchanged: no event, exactly as HA
+                    sent[eid] = text
                     await ws.send_json({
                         "type": "event",
                         "event": {
                             "event_type": "state_changed",
                             "data": {
                                 "entity_id": eid,
-                                "new_state": {"entity_id": eid, "state": str(val)},
+                                "new_state": {"entity_id": eid, "state": text},
                             },
                         },
                     })
@@ -172,6 +190,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=18123)
     ap.add_argument("--mqtt-host", default="127.0.0.1")
+    ap.add_argument("--steady", action="store_true",
+                    help="report whole amps, so a settled house stops changing "
+                         "and Home Assistant sends no events at all")
     ap.add_argument("--mqtt-port", default="18830",
                     help="comma-separated broker ports, one per charger")
     args = ap.parse_args()
@@ -180,6 +201,7 @@ def main():
                         format="%(asctime)s %(name)-14s %(message)s", datefmt="%H:%M:%S")
 
     world = World()
+    world.steady = args.steady
     for port in str(args.mqtt_port).split(","):
         start_mqtt(world, args.mqtt_host, int(port.strip()))
     log.info("fake Home Assistant on ws://127.0.0.1:%s/api/websocket", args.port)

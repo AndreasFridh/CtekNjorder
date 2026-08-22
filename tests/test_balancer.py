@@ -303,3 +303,27 @@ def test_stale_charger_does_not_invent_headroom():
     # 20 A of house plus the 16 A it would have allowed blows a 25 A fuse.
     assert 20.0 + phantom.setpoint > 25
     assert 20.0 + honest.setpoint <= 25
+
+
+def test_the_fallback_is_expressed_as_headroom_not_only_a_setpoint():
+    """
+    Regression: the allocator divides headroom, so a fallback that reported a
+    setpoint but no headroom gave every charger 0 A. The configured fallback
+    current looked like it was set and did nothing at all.
+    """
+    bal = make(fallback_current=6)
+    bal.setpoint = 16
+    d = bal.compute(now=1.0, house_current=None, house_age=0,
+                    charger_current=[0, 0, 0], ev_uses_phase=[1, 1, 1])
+    assert d.setpoint == 6
+    assert d.headroom, "no headroom means the allocator can hand out nothing"
+    assert min(d.headroom) >= 6
+
+
+def test_a_fallback_of_zero_really_does_stop_everything():
+    bal = make(fallback_current=0)
+    bal.setpoint = 16
+    d = bal.compute(now=1.0, house_current=None, house_age=0,
+                    charger_current=[0, 0, 0], ev_uses_phase=[1, 1, 1])
+    assert d.setpoint == 0
+    assert max(d.headroom) == 0
