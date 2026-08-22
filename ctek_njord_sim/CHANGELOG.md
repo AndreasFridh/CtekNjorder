@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.4
+
+- No functional change. Records planned work in `todo.md`: a charge-enable
+  input for price automation, an electricity price input for cost tracking,
+  per-charger network monitoring, and a nicer set of charger cards.
+
 ## 0.9.3
 
 - Added the add-on icon and logo, so it no longer shows a generic placeholder
