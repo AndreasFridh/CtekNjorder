@@ -11,7 +11,7 @@ explicit about.
 | Add-on options | Yes | Set by the owner through Home Assistant. |
 | Charger MQTT broker | **No** | Accepts anonymous publish from anywhere on the LAN. |
 | Home Assistant entity states | Partly | Values are trusted; names and IDs are escaped before display. |
-| Web UI requests | Partly | Ingress authenticates users, but see *Network exposure*. |
+| Web UI requests | Partly | Ingress authenticates the user; the API accepts only the Ingress proxy. |
 
 ## The charger's broker is unauthenticated
 
