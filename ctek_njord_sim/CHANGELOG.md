@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.9.0
+
+**Up to six chargers.** The Nanogrid Air controls exactly one; this is the
+reason the project exists.
+
+- Each charger is configured with its own address, because each one hosts its
+  own MQTT broker. Existing single-charger installs are migrated automatically
+  and need no changes.
+- The meter sees every car at once, so the house baseline is now the reading
+  minus *all* of them, and the remaining headroom is shared out.
+- **Sharing** setting: `optimal` notices a car that is not taking everything it
+  was offered - an onboard limit, or tapering near full - and gives the surplus
+  to a car that can use it. `even` always splits equally.
+- A charger with no car is given nothing rather than a share, so it cannot
+  strand current a waiting car could use. Demand is inferred from behaviour,
+  because only the charging value of `State` has ever been confirmed on real
+  hardware.
+- When there is not enough for everyone, fewer cars charge properly rather than
+  all of them charging illegally below the 6 A floor. Cars already charging
+  keep priority, so the set does not churn.
+- Per-charger cards on the dashboard: allocation, actual draw, and whether a
+  car is capped, waiting, or absent.
+- The UI is no longer cached, so it cannot be left stale against a newer API
+  after an update.
+
 ## 0.8.0
 
 - **Charts now survive a restart.** History is kept in two tiers: one sample a

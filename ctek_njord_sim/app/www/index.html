@@ -86,6 +86,29 @@ canvas{width:100%;height:190px;display:block}
 .qmsg.ok{color:var(--ok)}
 .dirty{font-size:12px;color:var(--warn);font-weight:600}
 .qhint{grid-column:1/-1;font-size:12px;color:var(--muted)}
+.chg{border-top:1px solid var(--line);padding:13px 0}
+.chg:first-child{border-top:0;padding-top:0}
+.chg:last-child{padding-bottom:0}
+.chg-head{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.chg-name{font-weight:650}
+.chg-tag{font-size:11px;padding:1px 8px;border-radius:99px;border:1px solid var(--line);
+  color:var(--muted)}
+.chg-tag.on{border-color:var(--ok);color:var(--ok)}
+.chg-tag.wait{border-color:var(--warn);color:var(--warn)}
+.chg-tag.off{border-color:var(--bad);color:var(--bad)}
+.chg-num{margin-left:auto;font-variant-numeric:tabular-nums;font-size:20px}
+.chg-num small{font-size:12px;color:var(--muted);font-weight:400}
+.chg-sub{font-size:12px;color:var(--muted);margin-top:4px;
+  display:flex;gap:14px;flex-wrap:wrap}
+.chg-sub code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+.chg-bar{height:7px;background:var(--free);border-radius:4px;margin-top:7px;overflow:hidden}
+.chg-bar i{display:block;height:100%;background:var(--car);transition:width .4s ease}
+.crow{display:grid;grid-template-columns:1.1fr 1.4fr 80px auto;gap:8px;
+  align-items:center;margin-bottom:7px}
+.crow input[type=text],.crow input[type=number]{margin:0}
+.cen{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);
+  font-weight:400;white-space:nowrap}
+@media (max-width:640px){.crow{grid-template-columns:1fr 1fr;}}
 footer{margin:22px 0 8px;font-size:12px;color:var(--muted);text-align:center}
 footer a{color:var(--muted)}
 .grp{margin-bottom:22px}
@@ -121,7 +144,7 @@ body.offline .card,body.offline .tabs{opacity:.5;filter:grayscale(.6)}
 <header>
   <h1>CTEK Njord Load Balancer</h1>
   <div class="badges">
-    <div class="badge"><span class="dot" id="d-charger"></span>Charger</div>
+    <div class="badge"><span class="dot" id="d-charger"></span><span id="d-charger-t">Chargers</span></div>
     <div class="badge"><span class="dot" id="d-hass"></span>Home Assistant</div>
   </div>
 </header>
@@ -138,7 +161,7 @@ body.offline .card,body.offline .tabs{opacity:.5;filter:grayscale(.6)}
   <div class="card">
     <div class="hero">
       <div>
-        <div class="k muted" style="font-size:11px;text-transform:uppercase">Allowed current</div>
+        <div class="k muted" style="font-size:11px;text-transform:uppercase">Total allowed</div>
         <div class="big" id="setpoint">–<span>A</span></div>
       </div>
       <div class="reason" id="reason">Starting up…</div>
@@ -196,8 +219,8 @@ body.offline .card,body.offline .tabs{opacity:.5;filter:grayscale(.6)}
   </div>
 
   <div class="card">
-    <h2>Charger</h2>
-    <div class="stats" id="stats"></div>
+    <h2>Chargers</h2>
+    <div id="chargers"></div>
   </div>
 </section>
 
@@ -270,10 +293,11 @@ function renderBanners(s) {
     out += banner('bad', `<b>Configuration problem.</b>&nbsp;${esc(s.error)} Fix it under Settings.`);
   if (s.dry_run)
     out += banner('warn', '<b>Dry run.</b>&nbsp;Decisions are logged but nothing is sent to the charger. Turn this off under Settings once you are happy — and block the Nanogrid Air first, or the two will fight.');
-  if (!s.connected.charger)
-    out += banner('bad', '<b>Not connected to the charger.</b>&nbsp;Check the address under Settings.');
-  else if (!s.connected.bound)
-    out += banner('warn', '<b>Connected, but no charger found yet.</b>&nbsp;Waiting for its retained configuration topic.');
+  const bad = (s.chargers || []).filter(c => !c.bound);
+  if (bad.length)
+    out += banner(s.connected.chargers_bound ? 'warn' : 'bad',
+      `<b>${bad.length} of ${s.connected.chargers_total} chargers not reachable.</b>&nbsp;` +
+      bad.map(c => esc(c.name)).join(', ') + '. Check the addresses under Settings.');
   if (!s.connected.hass)
     out += banner('bad', '<b>Not connected to Home Assistant.</b>&nbsp;No live meter readings.');
   $('#banners').innerHTML = out;
@@ -281,7 +305,11 @@ function renderBanners(s) {
 
 function renderPhases(s) {
   const fuse = s.limits.main_fuse, margin = s.limits.safety_margin;
-  const house = s.house.current, car = s.charger.current || [0, 0, 0];
+  const house = s.house.current;
+  // Every car at once: the meter sees them together, so the bars must too.
+  const car = [0, 0, 0];
+  (s.chargers || []).forEach(c =>
+    (c.current || []).forEach((v, i) => { if (i < 3) car[i] += v; }));
   const base = s.decision.baseline && s.decision.baseline.length ? s.decision.baseline : null;
   const scale = Math.max(fuse, ...(house || [0])) * 1.06;
   let out = '';
@@ -302,6 +330,47 @@ function renderPhases(s) {
       </div></div>`;
   }
   $('#phases').innerHTML = out;
+}
+
+function renderChargers(s) {
+  const list = s.chargers || [];
+  if (!list.length) {
+    $('#chargers').innerHTML =
+      '<p class="muted">No chargers configured. Add one under Settings.</p>';
+    return;
+  }
+  $('#chargers').innerHTML = list.map(c => {
+    let tag, cls;
+    if (!c.bound)          { tag = c.connected ? 'connecting' : 'offline'; cls = 'off'; }
+    else if (c.allocated)  { tag = 'charging'; cls = 'on'; }
+    else if (c.wants)      { tag = 'waiting for capacity'; cls = 'wait'; }
+    else                   { tag = 'no car'; cls = ''; }
+
+    // How much of its allowance the car is actually taking. A car well under
+    // its allowance is the signal that 'optimal' acts on.
+    const pct = c.allocated > 0 ? Math.min(100, c.drawn / c.allocated * 100) : 0;
+    const sub = [];
+    // Only State 2 is confirmed against real hardware; do not name the others.
+    if (c.state !== null && c.state !== undefined)
+      sub.push(c.state === 2 ? 'Charging' : 'State ' + esc(c.state));
+    if (c.power !== null && c.power !== undefined)
+      sub.push((c.power / 1000).toFixed(2) + ' kW');
+    if (c.energy !== null && c.energy !== undefined)
+      sub.push((c.energy / 1000).toFixed(1) + ' kWh');
+    sub.push('<code>' + esc(c.host) + '</code>');
+    if (c.serial) sub.push('<code>' + esc(c.serial) + '</code>');
+
+    return `<div class="chg">
+      <div class="chg-head">
+        <span class="chg-name">${esc(c.name)}</span>
+        <span class="chg-tag ${cls}">${tag}</span>
+        <span class="chg-num">${c.allocated}<small> A allowed</small>
+          &nbsp;&middot;&nbsp;${c.drawn.toFixed(1)}<small> A drawn</small></span>
+      </div>
+      <div class="chg-bar"><i style="width:${pct}%"></i></div>
+      <div class="chg-sub">${sub.join('<span></span>')}</div>
+    </div>`;
+  }).join('');
 }
 
 function renderStats(s) {
@@ -375,16 +444,19 @@ QUICK.forEach(k => {
 
 function renderState(s) {
   LAST = s;
-  $('#d-charger').classList.toggle('on', s.connected.charger && s.connected.bound);
+  const cb = s.connected.chargers_bound, ct = s.connected.chargers_total;
+  $('#d-charger').classList.toggle('on', cb > 0 && cb === ct);
+  $('#d-charger-t').textContent = ct === 1 ? 'Charger' : `Chargers ${cb}/${ct}`;
   $('#d-hass').classList.toggle('on', s.connected.hass);
   const sp = s.decision.setpoint;
   $('#setpoint').innerHTML = (sp === null ? '–' : sp) + '<span>A</span>';
   $('#setpoint').style.color = sp === 0 ? 'var(--warn)' : 'inherit';
-  $('#reason').textContent = s.decision.reason;   // textContent: no escaping needed
+  $('#reason').textContent =
+    s.decision.reason + (s.decision.allocation ? ' — ' + s.decision.allocation : '');
   renderBanners(s);
   renderQuick(s);
   renderPhases(s);
-  renderStats(s);
+  renderChargers(s);
 }
 
 /* ---------- charts ---------- */
@@ -512,6 +584,23 @@ function entityInput(key, idx, val, kind) {
 
 function field(sp) {
   const v = VALUES[sp.key];
+  if (sp.type === 'chargers') {
+    const rows = (v || []).slice(0, 6);
+    // Always show one spare row so adding a charger needs no "add" button;
+    // a row with a blank address simply is not a charger.
+    while (rows.length < 6) rows.push({ name: '', host: '', port: 1883, serial: '', enabled: true });
+    return `<div class="crow" style="color:var(--muted);font-size:11px;
+              text-transform:uppercase;letter-spacing:.04em">
+              <span>Name</span><span>Address</span><span>Port</span><span></span></div>` +
+      rows.map((r, i) => `<div class="crow" data-crow="${i}">
+        <input type="text" class="cname" placeholder="Charger ${i + 1}" value="${esc(r.name)}">
+        <input type="text" class="chost" placeholder="192.168.1.50" value="${esc(r.host)}">
+        <input type="number" class="cport" min="1" max="65535" value="${esc(r.port || 1883)}">
+        <label class="cen"><input type="checkbox" class="cenabled"
+          ${r.enabled === false ? '' : 'checked'}> on</label>
+        <input type="hidden" class="cserial" value="${esc(r.serial)}">
+      </div>`).join('');
+  }
   if (sp.type === 'bool')
     return `<input type="checkbox" id="f_${sp.key}" data-key="${sp.key}" ${v ? 'checked' : ''}>`;
   if (sp.type === 'select')
@@ -572,6 +661,20 @@ async function loadSettings() {
 function collect() {
   const out = {};
   SPECS.forEach(sp => {
+    if (sp.type === 'chargers') {
+      const rows = [...document.querySelectorAll('[data-crow]')];
+      if (!rows.length) return;          // section hidden, do not clear it
+      out[sp.key] = rows.map(el => ({
+        name: el.querySelector('.cname').value.trim(),
+        host: el.querySelector('.chost').value.trim(),
+        port: +el.querySelector('.cport').value || 1883,
+        // Discovered at runtime, so carry the known value rather than
+        // clearing it every time the form is saved.
+        serial: el.querySelector('.cserial').value.trim(),
+        enabled: el.querySelector('.cenabled').checked,
+      })).filter(r => r.host);
+      return;
+    }
     if (sp.type === 'entity3') {
       const vals = [0, 1, 2].map(i => {
         const el = document.querySelector(`[data-key="${sp.key}"][data-idx="${i}"]`);
@@ -637,6 +740,9 @@ async function tick() {
     renderState(await api('state'));
     if (missed) { missed = 0; document.body.classList.remove('offline'); }
   } catch (e) {
+    // A render bug and a dead add-on looked identical from here, and the
+    // render bug silently blanked every section after the one that threw.
+    console.error('dashboard update failed', e);
     // A frozen dashboard looks exactly like a healthy one, which is the worst
     // possible failure for a page whose job is to show live current. Say so.
     if (++missed === 3) {

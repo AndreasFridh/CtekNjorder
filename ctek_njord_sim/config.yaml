@@ -1,5 +1,5 @@
 name: CTEK Njord Load Balancer
-version: "0.8.0"
+version: "0.9.0"
 slug: ctek_njord_sim
 description: >-
   Replaces the CTEK Nanogrid Air. Impersonates the adapter on the charger's own
@@ -23,7 +23,14 @@ panel_icon: mdi:ev-station
 panel_title: Njord
 
 options:
-  charger_host: "192.168.5.40"
+  chargers:
+    - name: "Charger 1"
+      host: "192.168.5.40"
+      port: 1883
+      serial: ""
+      enabled: true
+  allocation_strategy: optimal
+  charger_host: ""
   charger_port: 1883
   charger_username: ""
   charger_password: ""
@@ -52,7 +59,14 @@ options:
   log_level: info
 
 schema:
-  charger_host: str
+  chargers:
+    - name: str?
+      host: str?
+      port: port?
+      serial: str?
+      enabled: bool?
+  allocation_strategy: list(optimal|even)
+  charger_host: str?
   charger_port: port
   charger_username: str?
   charger_password: password?

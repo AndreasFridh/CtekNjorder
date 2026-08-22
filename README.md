@@ -4,6 +4,9 @@ A Home Assistant add-on that replaces the **CTEK Nanogrid Air**. It impersonates
 the adapter on the charger's own MQTT broker and load-balances EV charging
 against real-time current readings from Home Assistant.
 
+**It drives up to six chargers.** The Nanogrid Air controls exactly one, and
+that limit is the main reason this exists.
+
 The MQTT protocol between the Njord GO and the Nanogrid Air is not documented by
 CTEK. It was reverse-engineered from live captures — see **[PROTOCOL.md](PROTOCOL.md)**.
 
@@ -16,7 +19,8 @@ CTEK. It was reverse-engineered from live captures — see **[PROTOCOL.md](PROTO
 | Piece | State |
 |---|---|
 | Protocol discovery | Done — full topic map, verified against a 15 min live capture |
-| Balancer | Done — 137 tests, reproduces the real adapter's decisions 100% in steady state |
+| Balancer | Done — reproduces the real adapter's decisions 100% in steady state |
+| Multi-charger | Done — up to 6, with even or optimal sharing |
 | MQTT client / adapter impersonation | Done — verified end-to-end against the real charger in dry-run |
 | Offline simulation rig | Done — fake charger + fake HA, exercises overload and recovery |
 | Live control (`dry_run: false`) | Verified against the simulator; **not yet against the real charger** |
@@ -52,9 +56,14 @@ send without sending any. Full setup and options are in
 ## How it works
 
 ```
-  P1 meter ──► Home Assistant ──► this add-on ──► charger's MQTT broker
-                (per-phase A)      (balancer)     ctek/ng-v2/controller/{serial}/1/current
+  P1 meter ──► Home Assistant ──► this add-on ──┬─► charger 1's MQTT broker
+                (per-phase A)      (balancer +   ├─► charger 2's MQTT broker
+                                    allocator)   └─► ... up to six
 ```
+
+Each charger hosts its own broker, so each gets its own connection. The meter
+is singular and sees every car at once, which is what makes the split a
+separate problem from the limit.
 
 The charger runs the MQTT broker itself. We connect to it as a client, publish
 meter data exactly as the Nanogrid Air does, and command an allowed current.
@@ -62,9 +71,14 @@ meter data exactly as the Nanogrid Air does, and command an allowed current.
 Each tick the add-on:
 
 1. Reads per-phase house current from HA (push, via the WebSocket API).
-2. Subtracts the car's own draw — reported by the charger — to get the house baseline.
+2. Subtracts **every** car's draw to get the house baseline.
 3. Computes headroom: `main_fuse - safety_margin - baseline`.
-4. Snaps to the legal set (`0`, or `6..16 A`) and publishes it.
+4. Splits that headroom between the chargers that have a car asking to charge.
+5. Snaps each share to the legal set (`0`, or `6..16 A`) and publishes it.
+
+Two decisions, kept apart: the **balancer** decides how much current EV
+charging may take in total, and the **allocator** decides how that total is
+divided.
 
 Meter data is republished to the charger every 10 s and the setpoint every 15 s,
 matching the real adapter's cadence.

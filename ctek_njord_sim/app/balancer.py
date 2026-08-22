@@ -8,11 +8,67 @@ recorded captures without touching a real charger.
 from __future__ import annotations
 
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 
 from .protocol import PHASE_ROTATIONS
 
 _LOG = logging.getLogger(__name__)
+
+
+class BaselineFilter:
+    """
+    Steadies the derived house baseline without ever under-stating it.
+
+    The baseline is not measured, it is inferred: meter minus every car. Both
+    terms are sampled at different moments, so while a car ramps the
+    subtraction is briefly wrong - and with two cars the errors compound. Left
+    raw, the inferred baseline swings several amps when the real one is flat,
+    which moves the headroom, which moves the allocation, which makes the cars
+    ramp again. The loop feeds itself.
+
+    Holding the highest value seen in the last few seconds fixes it in the only
+    direction that is safe. A genuine rise in house load is adopted at once,
+    because it is immediately the maximum. A dip is only believed once it has
+    persisted for the whole window, which is exactly the behaviour wanted from
+    something standing in front of a main fuse: quick to see danger, slow to
+    assume it has passed.
+    """
+
+    def __init__(self, window: float = 15.0):
+        self.window = window
+        self._samples: deque[tuple[float, list[float]]] = deque()
+        self._last: list[float] | None = None
+
+    def update(self, now: float, baseline: list[float] | None,
+               trust: bool = True) -> list[float] | None:
+        """
+        Add a reading and return the filtered baseline.
+
+        `trust=False` says a car is mid-ramp, so this particular reading is
+        known to be wrong and must not be recorded. That matters more than it
+        sounds: holding the maximum LATCHES a bad sample for the whole window,
+        so a single ramp artefact becomes a sustained phantom load, which cuts
+        the allocation, which starts another ramp. Filtering the noise is not
+        enough - the corrupted samples have to be kept out in the first place.
+
+        Ramps last a few seconds and the window is much longer, so the previous
+        good samples carry through.
+        """
+        if baseline is None:
+            return self._last
+        if trust:
+            self._samples.append((now, list(baseline)))
+        cutoff = now - self.window
+        while self._samples and self._samples[0][0] < cutoff:
+            self._samples.popleft()
+        if not self._samples:
+            # Everything aged out during a long ramp; the raw reading is all
+            # there is, and over-stating the baseline is the safe way to err.
+            return self._last if self._last is not None else list(baseline)
+        width = len(baseline)
+        self._last = [max(s[1][p] for s in self._samples) for p in range(width)]
+        return self._last
 
 
 @dataclass

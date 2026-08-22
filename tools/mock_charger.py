@@ -26,16 +26,9 @@ from amqtt.broker import Broker
 logging.getLogger("amqtt").setLevel(logging.WARNING)
 logging.getLogger("transitions").setLevel(logging.WARNING)
 
-SERIAL = "40353I37W4008218"
+DEFAULT_SERIAL = "40353I37W4008218"
 FW = "r3.2.2-0-g673feded_mmiR1"
-
-T_STATION_CFG = f"ctek/ng-v2/client/{SERIAL}/configuration"
-T_OUTLET_CFG = f"ctek/ng-v2/client/{SERIAL}/1/configuration"
-T_UPDATE = f"ctek/ng-v2/client/{SERIAL}/1/update"
-T_INFO = f"ctek/ng-v2/client/{SERIAL}/1/info"
 T_DEBUG = "ctek/ng-v2/debug"
-T_CONTROL = f"ctek/ng-v2/controller/{SERIAL}/1/current"
-
 FUSE_RATING = 16
 MIN_ALLOWED = 6
 
@@ -62,29 +55,36 @@ class Car:
 
 
 class MockCharger:
-    def __init__(self, host, port, car_wants):
+    def __init__(self, host, port, car_wants, serial=DEFAULT_SERIAL):
         self.host, self.port = host, port
+        self.serial = serial
+        self.t_station_cfg = f"ctek/ng-v2/client/{serial}/configuration"
+        self.t_outlet_cfg = f"ctek/ng-v2/client/{serial}/1/configuration"
+        self.t_update = f"ctek/ng-v2/client/{serial}/1/update"
+        self.t_info = f"ctek/ng-v2/client/{serial}/1/info"
+        self.t_control = f"ctek/ng-v2/controller/{serial}/1/current"
         self.car = Car(car_wants)
         self.setpoint = None
         self.energy = 7_826_000
         self.state = 2
-        self.log = logging.getLogger("mock-charger")
-        self._c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="mock-njord")
+        self.log = logging.getLogger(f"mock-{serial[-4:]}")
+        self._c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
+                              client_id=f"mock-njord-{serial[-6:]}")
         self._c.on_connect = self._on_connect
         self._c.on_message = self._on_message
 
     def _on_connect(self, c, u, flags, rc, props=None):
         self.log.info("charger client connected (rc=%s)", rc)
-        c.subscribe(T_CONTROL, qos=0)
-        c.publish(T_STATION_CFG,
+        c.subscribe(self.t_control, qos=0)
+        c.publish(self.t_station_cfg,
                   json.dumps({"FW": FW, "StationPhaseRotation": "RST"}), retain=True)
-        c.publish(T_OUTLET_CFG, json.dumps({
+        c.publish(self.t_outlet_cfg, json.dumps({
             "FuseRating": FUSE_RATING, "MinAllowedCurrent": MIN_ALLOWED,
             "PhaseConnected": [True, True, True], "PrimaryPhase": 1,
         }), retain=True)
 
     def _on_message(self, c, u, msg):
-        if msg.topic != T_CONTROL:
+        if msg.topic != self.t_control:
             return
         try:
             amps = int(msg.payload.decode())
@@ -107,7 +107,7 @@ class MockCharger:
             self.car.step(allowed, dt)
             phases = self.car.phases()
 
-            self._c.publish(T_UPDATE, json.dumps({
+            self._c.publish(self.t_update, json.dumps({
                 "State": self.state,
                 "EvUsesPhase": [1, 1, 1],
                 "MaxAllowedCurrent": allowed,
@@ -117,10 +117,11 @@ class MockCharger:
             power = int(sum(p * 231 for p in phases))
             self.energy += int(power * dt / 3600)
             if int(t) % 10 == 0:
-                self._c.publish(T_INFO, json.dumps({"energy": self.energy, "power": power}))
+                self._c.publish(self.t_info, json.dumps({"energy": self.energy, "power": power}))
             if int(t) % 6 == 0:
                 self._c.publish(T_DEBUG, json.dumps(
-                    {"ids": f"{SERIAL},", "status": [self.state, 0, 9, 64]}), retain=True)
+                    {"ids": f"{self.serial},", "status": [self.state, 0, 9, 64]}),
+                    retain=True)
 
 
 async def main():
@@ -128,7 +129,9 @@ async def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=18830)
     ap.add_argument("--car-wants", type=float, default=16.0,
-                    help="amps the car would draw if unrestricted")
+                    help="amps the car would draw if unrestricted - set this "
+                         "below 16 to simulate a car with an onboard limit")
+    ap.add_argument("--serial", default=DEFAULT_SERIAL)
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO,
@@ -141,10 +144,11 @@ async def main():
         "topic-check": {"enabled": False},
     })
     await broker.start()
-    logging.getLogger("mock-charger").info(
-        "broker listening on %s:%s as charger %s", args.host, args.port, SERIAL)
+    logging.getLogger("mock").info(
+        "broker on %s:%s as charger %s (car wants %.0f A)",
+        args.host, args.port, args.serial, args.car_wants)
 
-    await MockCharger(args.host, args.port, args.car_wants).run()
+    await MockCharger(args.host, args.port, args.car_wants, args.serial).run()
 
 
 if __name__ == "__main__":

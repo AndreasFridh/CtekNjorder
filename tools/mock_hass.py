@@ -24,8 +24,9 @@ import paho.mqtt.client as mqtt
 from aiohttp import WSMsgType, web
 
 ENTITIES = ["sensor.mock_l1", "sensor.mock_l2", "sensor.mock_l3"]
-SERIAL = "40353I37W4008218"
-T_UPDATE = f"ctek/ng-v2/client/{SERIAL}/1/update"
+# Wildcard: with several chargers we do not know the serials in advance, and a
+# real meter would see all of them regardless.
+T_UPDATE = "ctek/ng-v2/client/+/1/update"
 
 # (until_seconds, baseline_amps_per_phase, label)
 PROFILE = [
@@ -42,9 +43,14 @@ class World:
     """Shared truth: the house baseline plus whatever the car is drawing."""
 
     def __init__(self):
-        self.car = [0.0, 0.0, 0.0]
+        self.cars: dict[str, list[float]] = {}     # keyed by broker+serial
         self.start = time.time()
         self._label = None
+
+    @property
+    def car(self) -> list[float]:
+        """Every car at once, which is what the meter actually measures."""
+        return [sum(v[p] for v in self.cars.values()) for p in range(3)]
 
     def baseline(self) -> float:
         t = time.time() - self.start
@@ -67,11 +73,13 @@ def start_mqtt(world: World, host: str, port: int) -> None:
 
     def on_message(c, u, msg):
         try:
-            world.car = [float(x) for x in json.loads(msg.payload)["Current"]]
+            key = f"{port}:{msg.topic.split('/')[3]}"
+            world.cars[key] = [float(x) for x in json.loads(msg.payload)["Current"]]
         except Exception:
             pass
 
-    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="mock-hass")
+    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
+                    client_id=f"mock-hass-{port}")
     c.on_connect = on_connect
     c.on_message = on_message
     c.connect_async(host, port, keepalive=30)
@@ -139,14 +147,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=18123)
     ap.add_argument("--mqtt-host", default="127.0.0.1")
-    ap.add_argument("--mqtt-port", type=int, default=18830)
+    ap.add_argument("--mqtt-port", default="18830",
+                    help="comma-separated broker ports, one per charger")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(name)-14s %(message)s", datefmt="%H:%M:%S")
 
     world = World()
-    start_mqtt(world, args.mqtt_host, args.mqtt_port)
+    for port in str(args.mqtt_port).split(","):
+        start_mqtt(world, args.mqtt_host, int(port.strip()))
     log.info("fake Home Assistant on ws://127.0.0.1:%s/api/websocket", args.port)
     log.info("entities: %s", ", ".join(ENTITIES))
     web.run_app(make_app(world), host="127.0.0.1", port=args.port, print=None)
