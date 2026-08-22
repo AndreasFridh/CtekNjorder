@@ -24,6 +24,9 @@ import paho.mqtt.client as mqtt
 from aiohttp import WSMsgType, web
 
 ENTITIES = ["sensor.mock_l1", "sensor.mock_l2", "sensor.mock_l3"]
+# Extra entities so the charge-enable gate and the price input can be exercised.
+GATE = "input_boolean.charge_enable"
+PRICE = "sensor.electricity_price"
 # Wildcard: with several chargers we do not know the serials in advance, and a
 # real meter would see all of them regardless.
 T_UPDATE = "ctek/ng-v2/client/+/1/update"
@@ -44,6 +47,8 @@ class World:
 
     def __init__(self):
         self.cars: dict[str, list[float]] = {}     # keyed by broker+serial
+        self.gate = "on"
+        self.price = 2.45
         self.start = time.time()
         self._label = None
 
@@ -99,7 +104,8 @@ def make_app(world: World) -> web.Application:
             """Emit state_changed events, as a real P1 integration would."""
             while True:
                 await asyncio.sleep(2.0)
-                for eid, val in zip(ENTITIES, world.house()):
+                extra = [(GATE, world.gate), (PRICE, world.price)]
+                for eid, val in list(zip(ENTITIES, world.house())) + extra:
                     await ws.send_json({
                         "type": "event",
                         "event": {
@@ -124,8 +130,14 @@ def make_app(world: World) -> web.Application:
                     await ws.send_json({
                         "id": mid, "type": "result", "success": True,
                         "result": [
-                            {"entity_id": e, "state": str(v)}
+                            {"entity_id": e, "state": str(v),
+                             "attributes": {"unit_of_measurement": "A"}}
                             for e, v in zip(ENTITIES, world.house())
+                        ] + [
+                            {"entity_id": GATE, "state": world.gate,
+                             "attributes": {}},
+                            {"entity_id": PRICE, "state": str(world.price),
+                             "attributes": {"unit_of_measurement": "SEK/kWh"}},
                         ],
                     })
                 elif mtype == "subscribe_events":
@@ -138,8 +150,21 @@ def make_app(world: World) -> web.Application:
                 push_task.cancel()
         return ws
 
+    async def set_gate(request):
+        """Flip the charge-enable entity, so the gate can be exercised live."""
+        world.gate = request.match_info["value"]
+        log.info("--- charge enable -> %s ---", world.gate)
+        return web.json_response({"gate": world.gate})
+
+    async def set_price(request):
+        world.price = float(request.match_info["value"])
+        log.info("--- price -> %s ---", world.price)
+        return web.json_response({"price": world.price})
+
     app = web.Application()
     app.router.add_get("/api/websocket", websocket)
+    app.router.add_get("/gate/{value}", set_gate)
+    app.router.add_get("/price/{value}", set_price)
     return app
 
 

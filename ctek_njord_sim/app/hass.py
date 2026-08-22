@@ -43,12 +43,20 @@ class HassClient:
         self.url = url or os.environ.get("CTEK_HASS_WS", SUPERVISOR_WS)
         self.token = token or SUPERVISOR_TOKEN
         self.values: dict[str, float] = {}
+        # Raw states too: a charge-enable switch reports "on"/"off", which is
+        # not a number and would otherwise be thrown away.
+        self.raw: dict[str, str] = {}
         self.updated_at: dict[str, float] = {}
         self.connected = False
+        self.units: dict[str, str] = {}
         self._msg_id = 0
 
     def value(self, entity_id: str) -> float | None:
         return self.values.get(entity_id)
+
+    def state(self, entity_id: str) -> str | None:
+        """The entity's state as Home Assistant reports it, unparsed."""
+        return self.raw.get(entity_id)
 
     def age(self, entity_id: str) -> float:
         ts = self.updated_at.get(entity_id)
@@ -77,11 +85,15 @@ class HassClient:
     def _record(self, entity_id: str, state) -> None:
         if entity_id not in self.entity_ids:
             return
+        if state is not None:
+            self.raw[entity_id] = str(state)
         val = _as_float(state)
         if val is None:
-            # Keep the last good value but let it age out via stale_timeout,
-            # so a briefly 'unavailable' sensor doesn't cause a control glitch.
-            _LOG.debug("%s is non-numeric (%r), keeping previous value", entity_id, state)
+            # Keep the last good numeric value but let it age out via
+            # stale_timeout, so a briefly 'unavailable' sensor does not cause a
+            # control glitch. The raw state above is still updated, because for
+            # a switch "off" is the meaningful value, not a missing number.
+            self.updated_at[entity_id] = time.time()
             return
         self.values[entity_id] = val
         self.updated_at[entity_id] = time.time()
@@ -133,7 +145,11 @@ class HassClient:
 
                     if mtype == "result" and msg.get("id") == states_id:
                         for st in msg.get("result") or []:
-                            self._record(st.get("entity_id"), st.get("state"))
+                            eid = st.get("entity_id")
+                            self._record(eid, st.get("state"))
+                            unit = (st.get("attributes") or {}).get("unit_of_measurement")
+                            if eid in self.entity_ids and unit:
+                                self.units[eid] = str(unit)
                         missing = [e for e in self.entity_ids if e not in self.values]
                         if missing:
                             _LOG.warning(

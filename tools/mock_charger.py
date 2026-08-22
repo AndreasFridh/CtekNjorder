@@ -18,7 +18,6 @@ import asyncio
 import json
 import logging
 import random
-import threading
 
 import paho.mqtt.client as mqtt
 from amqtt.broker import Broker

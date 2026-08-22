@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.10.0
+
+Everything that was on the todo list, plus a scrub of the repository.
+
+- **Charge enable.** Point it at an entity your price automation switches and
+  charging is held at 0 A while it is off. Unset, unavailable, or a state we do
+  not recognise all mean permitted - this gate saves money, it does not keep
+  anyone safe, and a dropped sensor must not silently leave a car uncharged.
+  It can only withhold current, never raise an allowance.
+- **Electricity price.** Each session is costed as it goes, at the price in
+  force at the time, so an hourly tariff changing mid-session is priced
+  correctly. Cards show session energy and cost, cost per hour, and the
+  dashboard totals both. The unit is read from the entity, so ore and cents
+  work as well as whole units. Energy comes from the charger's own meter.
+- **Link monitoring.** Round-trip time and loss to each charger, with a
+  sparkline on its card. A TCP connect to the MQTT port rather than ICMP: no
+  extra privilege needed, and it tests the path charging actually uses.
+- **Reworked charger cards.** One card each, with session, cost, power,
+  lifetime energy, whether the car is limiting itself, and link quality.
+- **No installation-specific details left in the repository.** Addresses and
+  serial numbers are examples, no address ships as a default, and the setup
+  steps no longer assume any particular router.
+
 ## 0.9.4
 
 - No functional change. Records planned work in `todo.md`: a charge-enable
