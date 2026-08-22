@@ -210,7 +210,7 @@ class Service:
 
             current = self.house_current()
             self.last_house = current
-            age = self.hass.newest_age(opts.current_entities)
+            age = self.hass.feed_age(opts.current_entities)
             house_ts = self.hass.reading_ts(opts.current_entities)
 
             states = {c.id: c.state.snapshot() for c in bound}
@@ -432,7 +432,10 @@ class Service:
             "house": {
                 "current": self.last_house,
                 "voltage": self.house_voltage(),
+                # Time since the reading last CHANGED, which is informative but
+                # is not what staleness is judged on - see HassClient.feed_age.
                 "age": self._finite(self.hass.newest_age(self.opts.current_entities)),
+                "stale": self.hass.feed_age(self.opts.current_entities) > self.opts.stale_timeout,
                 "entities": self.opts.current_entities,
             },
             "decision": {

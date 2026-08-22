@@ -432,3 +432,15 @@ def test_jitter_alone_cannot_clear_a_cap():
 
     t.update(101.0, "d", setpoint=7, drawn=7.0)     # allocated floor(7.9)
     assert t.cap_for(200.0, "d", 7, 7.0, 16) == pytest.approx(7.9)
+
+
+def test_the_fallback_reaches_a_charger():
+    """End to end of the regression above: 6 A of headroom must be handed out."""
+    a = allocate([6.0, 6.0, 6.0], [charger("a", 0, charging=True)], total_cap=6.0)
+    assert a.per_charger["a"] == 6
+
+
+def test_a_scarce_fallback_serves_one_charger_properly():
+    a = allocate([6.0, 6.0, 6.0],
+                 [charger("a", 0, charging=True), charger("b", 1)], total_cap=6.0)
+    assert sorted(a.per_charger.values()) == [0, 6]

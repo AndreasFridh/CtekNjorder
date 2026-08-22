@@ -253,6 +253,11 @@ empty rows.
 **`These entities are not present in Home Assistant: ...`**
 The entity IDs are wrong. Check them in Developer Tools → States.
 
+**Log shows `FALLBACK: house data NNs old` while the meter looks fine**
+Fixed in 0.10.1. Home Assistant sends no event when a sensor re-reports an
+unchanged value, and freshness used to be judged by the last event - so a
+steady house looked like a dead meter. Update the add-on.
+
 **Log shows `FALLBACK: no house data`**
 The add-on connected to the charger but has no meter readings. Either the
 entity IDs are wrong, or they report non-numeric states such as `unavailable`.
