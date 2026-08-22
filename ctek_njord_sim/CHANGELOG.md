@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.1
+
+- No functional change. Cut the README from 239 lines to 90: setup, options and
+  troubleshooting live in DOCS.md, which is what Home Assistant shows on the
+  add-on page, and duplicating them was how they drifted apart.
+
 ## 0.11.0
 
 - **Charging session log.** Every completed session is recorded and kept across
