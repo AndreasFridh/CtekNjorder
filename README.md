@@ -172,3 +172,18 @@ Carried from [PROTOCOL.md](PROTOCOL.md); these are not yet answered:
 3. **The `State` enum** beyond `2` (charging).
 4. **Real overload behaviour** — the capture's house baseline never exceeded
    5.5 A, so throttling is backed by unit tests, not field evidence.
+
+## License
+
+Copyright (C) 2026 Andreas Fridh.
+
+Licensed under the **GNU Affero General Public License v3.0 or later** — see
+[LICENSE](LICENSE).
+
+You may use, study, modify and share this freely. If you distribute a modified
+version, or run one where other people interact with it over a network, you
+must offer them the source under the same license. The add-on links to its own
+source from the web UI for that reason.
+
+[PROTOCOL.md](PROTOCOL.md) documents an interoperability finding about a
+third-party product and is not covered by any CTEK claim of authorship.

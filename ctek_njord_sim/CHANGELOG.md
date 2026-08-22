@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.1
+
+- Licensed under AGPL-3.0-or-later. The web UI links to its own source, which
+  is what the license requires of software people interact with over a network.
+
 ## 0.7.0
 
 Closes the remaining items from the security and UX review.
