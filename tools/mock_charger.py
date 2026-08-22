@@ -106,8 +106,14 @@ class MockCharger:
             self.car.step(allowed, dt)
             phases = self.car.phases()
 
+            # Only State 2 has been seen on real hardware, and only while a car
+            # was charging. Reporting 2 with nothing plugged in made this mock
+            # claim something no real observation supports - and hid a bug where
+            # an empty charger held an allocation for ever. 1 here is a
+            # placeholder for "not charging", not a decoded value.
+            state = self.state if self.car.current > 0.2 else 1
             self._c.publish(self.t_update, json.dumps({
-                "State": self.state,
+                "State": state,
                 "EvUsesPhase": [1, 1, 1],
                 "MaxAllowedCurrent": allowed,
                 "Current": phases,
@@ -119,7 +125,7 @@ class MockCharger:
                 self._c.publish(self.t_info, json.dumps({"energy": self.energy, "power": power}))
             if int(t) % 6 == 0:
                 self._c.publish(T_DEBUG, json.dumps(
-                    {"ids": f"{self.serial},", "status": [self.state, 0, 9, 64]}),
+                    {"ids": f"{self.serial},", "status": [state, 0, 9, 64]}),
                     retain=True)
 
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.10.2
+
+- **Fixed "waiting for capacity" with capacity plainly available.** A charger
+  with no car takes none of the current it is offered, and that was recorded as
+  a car limited to about 1 A. One amp is below the 6 A minimum a car can
+  charge at, so it could never be served - and a paused charger cannot
+  demonstrate demand, so nothing ever revisited it. Drawing nothing is now read
+  as absence rather than as a limit, and no cap can fall below the minimum that
+  can actually be commanded.
+- **Draw now outranks `State`.** Current offered and not taken is measured;
+  `State` has only ever been confirmed as "2 happens while charging". A charger
+  reporting 2 with nothing plugged in used to hold an allocation indefinitely
+  on the strength of a flag we cannot read.
+- An empty charger is re-offered current every few minutes, and immediately
+  whenever its `State` changes, so a car plugged in while it was paused is
+  still noticed.
+- **Clearer status.** A charger with no car now reads
+  `ready - Not connected - Available capacity 16 A` instead of implying
+  something is wrong.
+
 ## 0.10.1
 
 Two fixes, both reported as "house data NNs old" while the meter was fine.

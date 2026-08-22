@@ -32,6 +32,9 @@ _LOG = logging.getLogger(__name__)
 
 EPS = 1e-9
 
+# Distinct from None, which is a State the charger can actually report.
+_UNSET = object()
+
 
 @dataclass
 class ChargerDemand:
@@ -270,6 +273,8 @@ class DemandTracker:
     """
 
     DRAWING_THRESHOLD = 0.5     # amps that count as "a car is taking current"
+    PROBE_EVERY = 300.0         # how often to re-offer a charger we think is empty
+    PROBE_FOR = 45.0            # how long each of those offers stands
     SETTLE = 20.0               # seconds before a draw is treated as settled
     IDLE_AFTER = 120.0          # seconds of nothing before we call it idle
     HEADROOM = 1.0              # amps of slack left above an observed limit
@@ -288,6 +293,8 @@ class DemandTracker:
         self._last_setpoint: dict[str, int] = {}
         self._last_draw: dict[str, float] = {}
         self._cap: dict[str, float] = {}
+        self._state: dict[str, object] = {}
+        self._empty_since: dict[str, float] = {}
 
     def update(self, now: float, cid: str, setpoint: int, drawn: float) -> None:
         """
@@ -321,18 +328,47 @@ class DemandTracker:
         way at all - see `should_probe`.
         """
         if drawn > self.DRAWING_THRESHOLD:
+            self._empty_since.pop(cid, None)
             return True
-        if state == 2:
+
+        # A change of State means something happened at the charger, and a car
+        # being plugged in is the likeliest thing. Only 2 has ever been
+        # confirmed, but a *change* is informative whatever the values mean.
+        previous = self._state.get(cid, _UNSET)
+        self._state[cid] = state
+        if previous is not _UNSET and previous != state:
+            self._empty_since.pop(cid, None)
             return True
-        # A charger we have paused cannot draw what it was not offered, so its
-        # silence proves nothing about whether a car is waiting there. Only an
-        # offer that went unused is evidence of an empty charger.
-        if self._last_setpoint.get(cid, 0) <= 0:
+
+        empty_since = self._empty_since.get(cid)
+        if empty_since is None:
+            # Current offered and not taken, for long enough, settles it -
+            # whatever State says. Draw is measured; State's meaning is
+            # unverified beyond "2 happens while charging", and a charger that
+            # reports 2 with nothing plugged in would otherwise hold an
+            # allocation for ever on the strength of a flag we cannot read.
+            #
+            # A charger we paused cannot draw what it was not offered, so its
+            # silence proves nothing there. Only an unused offer is evidence.
+            offered = self._last_setpoint.get(cid, 0) > 0
+            if offered and self.stable_for(now, cid) >= self.IDLE_AFTER:
+                self._empty_since[cid] = now
+                return False
+            if state == 2:
+                return True
             return True
-        return self.stable_for(now, cid) < self.IDLE_AFTER
+
+        # Concluded empty. Look again now and then, because a car plugged in
+        # while the charger was paused has no way of telling us.
+        cycle = (now - empty_since) % (self.PROBE_EVERY + self.PROBE_FOR)
+        return cycle >= self.PROBE_EVERY
+
+    def believed_empty(self, cid: str) -> bool:
+        """Whether we have concluded there is no car here."""
+        return cid in self._empty_since
 
     def cap_for(self, now: float, cid: str, setpoint: int, drawn: float,
-                max_current: int) -> float:
+                max_current: int, min_current: int = 6) -> float:
         """
         The most this car looks able to use.
 
@@ -344,6 +380,15 @@ class DemandTracker:
             # Hold whatever we already concluded rather than reverting to the
             # maximum, which would undo the cap the moment it took effect.
             return self._cap.get(cid, float(max_current))
+
+        # Drawing nothing at all is absence, not a limit. Reading it as one
+        # recorded an empty charger as a ~1 A car - below the legal minimum, so
+        # it could never be served again, and because a paused charger cannot
+        # demonstrate demand nothing would ever correct it. That deadlock shows
+        # up as "waiting for capacity" with capacity plainly available.
+        if drawn <= self.DRAWING_THRESHOLD:
+            self._cap.pop(cid, None)
+            return float(max_current)
 
         if drawn >= setpoint - self.SATISFIED_WITHIN:
             # Taking everything offered - but that only means it wants MORE if
@@ -366,5 +411,9 @@ class DemandTracker:
         # is enough for the car to show it wants more - the moment it does take
         # its allowance the branch above lifts the cap again.
         cap = min(self._cap.get(cid, float(max_current)), drawn + self.HEADROOM)
+        # Never below the minimum: the only legal setpoints are 0 or
+        # min_current upward, so a lower cap cannot be acted on - it just makes
+        # the charger unservable while looking like a considered decision.
+        cap = max(cap, float(min_current))
         self._cap[cid] = cap
         return cap

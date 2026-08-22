@@ -239,10 +239,17 @@ def test_a_charger_drawing_nothing_for_long_enough_is_treated_as_idle():
     assert not t.wants_current(100.0 + t.IDLE_AFTER + 1, "a", state=None, drawn=0.0)
 
 
-def test_the_one_confirmed_state_value_counts_as_active():
+def test_the_one_confirmed_state_value_does_not_outlive_the_evidence():
+    """
+    Superseded deliberately. State 2 used to keep a charger "wanting" for ever,
+    which meant one reporting 2 with nothing plugged in held an allocation
+    indefinitely. Current offered and not taken is measured; State's meaning is
+    not, so the measurement wins once there is any.
+    """
     t = DemandTracker()
     t.update(100.0, "a", setpoint=16, drawn=0.0)
-    assert t.wants_current(1e6, "a", state=2, drawn=0.0)
+    assert t.wants_current(105.0, "a", state=2, drawn=0.0), "no evidence yet"
+    assert not t.wants_current(100.0 + t.IDLE_AFTER + 1, "a", state=2, drawn=0.0)
 
 
 def test_a_car_settled_just_below_its_allowance_is_still_read_as_limited():
@@ -444,3 +451,100 @@ def test_a_scarce_fallback_serves_one_charger_properly():
     a = allocate([6.0, 6.0, 6.0],
                  [charger("a", 0, charging=True), charger("b", 1)], total_cap=6.0)
     assert sorted(a.per_charger.values()) == [0, 6]
+
+
+# ---------- an empty charger is not a tiny car ----------
+
+def test_a_charger_drawing_nothing_is_not_capped_at_nothing():
+    """
+    The deadlock behind "waiting for capacity" with capacity plainly available.
+
+    An empty charger offered current takes none, and that was recorded as a
+    ~1 A car. One amp is below the 6 A legal minimum, so the allocator could
+    never serve it - and a paused charger cannot demonstrate demand, so nothing
+    ever revisited the conclusion.
+    """
+    t = DemandTracker()
+    t.update(0.0, "empty", setpoint=9, drawn=0.0)
+    cap = t.cap_for(100.0, "empty", 9, 0.0, 16, 6)
+    assert cap == 16.0, "absence must not be read as a limit"
+
+
+def test_a_cap_is_never_below_the_minimum_that_can_be_commanded():
+    """The legal setpoints are 0 or min upward; a lower cap cannot be acted on."""
+    t = DemandTracker()
+    t.update(0.0, "d", setpoint=16, drawn=2.0)
+    assert t.cap_for(100.0, "d", 16, 2.0, 16, 6) >= 6.0
+
+
+def test_an_empty_charger_stops_holding_capacity():
+    t = DemandTracker()
+    t.update(0.0, "empty", setpoint=9, drawn=0.0)
+    assert t.wants_current(t.IDLE_AFTER + 1, "empty", state=None, drawn=0.0) is False
+    assert t.believed_empty("empty")
+
+
+def test_an_empty_charger_is_offered_current_again_now_and_then():
+    """
+    A car plugged in while the charger is paused cannot draw, so it has no way
+    to announce itself. Something has to look.
+    """
+    t = DemandTracker()
+    t.update(0.0, "empty", setpoint=9, drawn=0.0)
+    t.wants_current(t.IDLE_AFTER + 1, "empty", state=None, drawn=0.0)
+    base = t.IDLE_AFTER + 1
+
+    assert not t.wants_current(base + 60, "empty", state=None, drawn=0.0)
+    assert t.wants_current(base + t.PROBE_EVERY + 5, "empty", state=None, drawn=0.0), (
+        "an empty charger must be re-offered current eventually"
+    )
+
+
+def test_a_change_of_state_wakes_an_empty_charger_immediately():
+    """
+    Only State 2 is confirmed, but a *change* means something happened at the
+    charger - most likely a car being plugged in - whatever the values mean.
+    """
+    t = DemandTracker()
+    t.update(0.0, "d", setpoint=9, drawn=0.0)
+    t.wants_current(10.0, "d", state=1, drawn=0.0)
+    t.wants_current(t.IDLE_AFTER + 1, "d", state=1, drawn=0.0)
+    assert t.believed_empty("d")
+
+    assert t.wants_current(t.IDLE_AFTER + 5, "d", state=3, drawn=0.0)
+    assert not t.believed_empty("d")
+
+
+def test_drawing_current_clears_the_empty_conclusion():
+    t = DemandTracker()
+    t.update(0.0, "d", setpoint=9, drawn=0.0)
+    t.wants_current(t.IDLE_AFTER + 1, "d", state=None, drawn=0.0)
+    assert t.believed_empty("d")
+    assert t.wants_current(t.IDLE_AFTER + 2, "d", state=None, drawn=8.0)
+    assert not t.believed_empty("d")
+
+
+def test_spare_capacity_is_offered_to_a_charger_that_wants_it():
+    """The whole point: 9 A spare must reach a charger asking for current."""
+    a = allocate([9.7, 9.7, 9.7], [charger("a", 0, cap=16.0)], total_cap=9.0)
+    assert a.per_charger["a"] == 9
+
+
+def test_an_unused_offer_outranks_a_state_that_claims_charging():
+    """
+    Draw is measured; State's meaning is unverified beyond "2 happens while
+    charging". A charger reporting 2 with nothing plugged in would otherwise
+    hold an allocation for ever on the strength of a flag we cannot read.
+    """
+    t = DemandTracker()
+    t.update(0.0, "d", setpoint=16, drawn=0.0)
+    t.wants_current(10.0, "d", state=2, drawn=0.0)
+    assert not t.wants_current(t.IDLE_AFTER + 1, "d", state=2, drawn=0.0)
+    assert t.believed_empty("d")
+
+
+def test_state_two_still_counts_before_an_offer_has_been_ignored():
+    """Early on there is no evidence either way, so the flag is worth having."""
+    t = DemandTracker()
+    t.update(0.0, "d", setpoint=16, drawn=0.0)
+    assert t.wants_current(5.0, "d", state=2, drawn=0.0)

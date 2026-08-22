@@ -280,7 +280,8 @@ class Service:
                     phases=self._phases_of(st),
                     min_current=st["min_allowed_current"] or 6,
                     max_current=ceiling,
-                    cap=self.demand.cap_for(wall, client.id, setpoint, drawn, ceiling),
+                    cap=self.demand.cap_for(wall, client.id, setpoint, drawn,
+                                            ceiling, st["min_allowed_current"] or 6),
                     wants=self.demand.wants_current(wall, client.id, st["state"], drawn),
                     charging=drawn > self.demand.DRAWING_THRESHOLD,
                 ))
@@ -363,6 +364,13 @@ class Service:
             st = client.state.snapshot()
             drawn = max(st["current"]) if st["current"] else 0.0
 
+            ceiling = self._ceiling_for(st)
+            spare = None
+            if d and d.headroom:
+                spare = int(min(min(d.headroom), ceiling))
+                if spare < (st["min_allowed_current"] or 6):
+                    spare = 0
+
             active = self.costs.session_for(client.id)
             last = self.costs.last_completed(client.id)
             shown = active or last
@@ -407,6 +415,10 @@ class Service:
                 "cost_per_hour": (round(hourly, 4) if hourly is not None else None),
                 "link": {**self.links.stats(client.id),
                          "series": self.links.series(client.id, 40)},
+                # What this charger could be given right now, so a card can say
+                # "ready, N A available" instead of implying something is wrong.
+                "available": spare,
+                "believed_empty": self.demand.believed_empty(client.id),
                 "age": None if st["age"] == float("inf") else round(st["age"], 1),
             })
 
