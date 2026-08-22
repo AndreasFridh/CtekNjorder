@@ -16,7 +16,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ctek_njord_sim"))
 
-from app.history import BUCKET_SECONDS, LIVE_SECONDS, History  # noqa: E402
+from app.history import LIVE_SECONDS, History  # noqa: E402
 
 
 @pytest.fixture
@@ -130,7 +130,6 @@ def test_corrupt_lines_are_skipped_not_fatal(data_dir):
 
 
 def test_old_rows_are_dropped_on_load(data_dir):
-    h = History(data_dir)
     path = os.path.join(data_dir, "history.jsonl")
     ancient = time.time() - 30 * 24 * 3600
     with open(path, "w", encoding="utf-8") as f:

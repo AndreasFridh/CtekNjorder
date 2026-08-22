@@ -18,7 +18,6 @@ import asyncio
 import json
 import logging
 import random
-import threading
 
 import paho.mqtt.client as mqtt
 from amqtt.broker import Broker
@@ -26,7 +25,7 @@ from amqtt.broker import Broker
 logging.getLogger("amqtt").setLevel(logging.WARNING)
 logging.getLogger("transitions").setLevel(logging.WARNING)
 
-DEFAULT_SERIAL = "40353I37W4008218"
+DEFAULT_SERIAL = "40000A00X0000001"
 FW = "r3.2.2-0-g673feded_mmiR1"
 T_DEBUG = "ctek/ng-v2/debug"
 FUSE_RATING = 16

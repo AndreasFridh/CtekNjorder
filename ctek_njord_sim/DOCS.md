@@ -6,15 +6,16 @@ real-time per-phase readings from Home Assistant.
 
 ## Before you start
 
-**Take the Nanogrid Air off the network first.** The charger accepts a setpoint
-from whoever publishes one, so if the real adapter is still running the two of
-you will fight over the same topic and the current will flap.
+**Only one controller may be running at a time.** The charger accepts a
+setpoint from whoever publishes one, so if the original adapter is still on the
+network the two will disagree and the charging current will flap between them.
 
-Block it at your router (in UniFi: Client Devices → the Nanogrid Air → Block).
-That is reversible and needs no reset — the device reconnects on its own when
-you unblock it. Powering it off works equally well.
+Unplug it, or block it at your router — most routers can deny a device network
+access in one click, and it is reversible. Either way the adapter needs no
+reset and recovers on its own if you put it back.
 
-You do **not** need to unpair, factory-reset, or reconfigure the charger.
+You do **not** need to unpair, factory-reset, or reconfigure the charger
+itself.
 
 ## The web UI
 
@@ -135,6 +136,52 @@ When you are satisfied, turn **Dry run** off on the Settings tab. It takes
 effect immediately, with no restart — the log will say
 `Dry run DISABLED - now controlling the charger`.
 
+## Charging only when you want it
+
+**Charge enable** takes an entity Home Assistant switches on and off. While it
+is off every charger is held at 0 A; when it comes back on, load balancing
+resumes. Point it at an `input_boolean` driven by whatever price automation you
+already run.
+
+Leave it blank and charging is always permitted.
+
+If the entity is set but reports `unavailable`, `unknown`, or anything the
+add-on does not recognise, **charging is permitted**. This gate exists to save
+money, not to keep anyone safe, and a sensor dropping out overnight must not
+quietly leave a car uncharged. Only an explicit off stops charging.
+
+The gate can only ever withhold current. It never raises an allowance, and load
+balancing still applies underneath it, so enabled does not mean unlimited.
+
+## What charging costs
+
+**Electricity price** takes an entity carrying the current price per kWh. With
+it set, each charger's card shows the energy and cost of the session in
+progress and what it is costing per hour, and the dashboard totals both.
+
+The unit is read from the entity, so a sensor publishing öre or cents is
+handled as well as one publishing whole currency units. **Currency** is the
+label shown beside the figures and is cosmetic.
+
+Cost accumulates as energy is used, at the price in force at the time. On an
+hourly tariff the price changes during a session, and costing the total at the
+final price would be wrong for every session that spans a change.
+
+Energy comes from the charger's own lifetime meter, so it is the charger's
+measurement rather than an estimate.
+
+## Link quality
+
+Each charger's card shows the round-trip time to it and how many checks got no
+answer, with a small graph of recent measurements. A charger on marginal Wi-Fi
+turns into something visible rather than charging behaviour that seems
+inexplicable.
+
+This is a TCP connect to the charger's MQTT port, not an ICMP ping. ICMP would
+need a privilege the add-on does not have, and the TCP handshake tests the path
+charging actually depends on — a charger can answer pings while its broker is
+unreachable.
+
 ## How it decides
 
 ```
@@ -190,6 +237,10 @@ rather than charge slower, so the add-on commands 0 and pauses.
 | `settle_tolerance` | `1.5` | Amps of command-vs-actual mismatch counted as "still ramping". |
 | `control_interval` | `15` | Setpoint heartbeat, seconds. |
 | `meter_interval` | `10` | Meter data cadence, seconds. |
+| `charge_enable_entity` | — | Optional. Charging is permitted while this is on. Blank, unavailable or unrecognised all mean permitted. |
+| `price_entity` | — | Optional. Price per kWh; unit read from the entity. |
+| `currency` | `SEK` | Label shown beside costs. Cosmetic. |
+| `ping_interval` | `30` | Seconds between link checks. |
 | `dry_run` | `true` | Log decisions without sending them. |
 | `log_level` | `info` | Use `debug` for per-tick detail. |
 

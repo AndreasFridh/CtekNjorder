@@ -9,7 +9,7 @@ point is to observe the live conversation between it and the charger.
 Uses a randomised client id so the broker will NOT disconnect the real
 Nanogrid Air (brokers evict an existing session that reconnects with the same id).
 
-  python tools/sniff.py --host 192.168.5.40 --duration 300
+  python tools/sniff.py --host 192.168.1.50 --duration 300
 """
 import argparse
 import binascii

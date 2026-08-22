@@ -82,6 +82,23 @@ SPECS: tuple[Spec, ...] = (
     Spec("power_out_entity", "Export power", "entity", "Meter", restart=True,
          unit="kW", advanced=True, help="Optional. Solar export."),
 
+    # --- automation ---
+    Spec("charge_enable_entity", "Charge enable", "entity", "Automation",
+         restart=True,
+         help="Optional. An entity Home Assistant sets on or off to permit "
+              "charging - use it to charge only when electricity is cheap. "
+              "Leave blank and charging is always permitted. If it is set but "
+              "unavailable, charging is permitted, so a dropped sensor cannot "
+              "silently leave a car uncharged overnight."),
+    Spec("price_entity", "Electricity price", "entity", "Automation",
+         restart=True,
+         help="Optional. Current price per kWh. Used to cost each charging "
+              "session and show what charging is costing per hour. The unit "
+              "is read from the entity, so ore/cents are handled as well as "
+              "whole units."),
+    Spec("currency", "Currency", "str", "Automation",
+         help="Shown next to costs. Cosmetic only."),
+
     # --- behaviour ---
     Spec("dry_run", "Dry run", "bool", "Behaviour",
          help="Log the setpoint without sending it. Turn this off to take "
@@ -105,6 +122,11 @@ SPECS: tuple[Spec, ...] = (
     Spec("meter_interval", "Meter interval", "float", "Behaviour",
          min=1, max=60, step=1, unit="s", advanced=True,
          help="How often meter data is mirrored to the charger."),
+    Spec("ping_interval", "Link check interval", "int", "Behaviour",
+         min=5, max=600, unit="s", advanced=True,
+         help="How often to measure the connection to each charger. A TCP "
+              "connect to its MQTT port, not ICMP - it needs no extra "
+              "privileges and tests the path charging actually uses."),
     Spec("log_level", "Log level", "select", "Behaviour",
          choices=("trace", "debug", "info", "warning", "error")),
     Spec("restrict_api", "Restrict API to Ingress", "bool", "Behaviour",

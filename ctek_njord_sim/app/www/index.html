@@ -86,9 +86,16 @@ canvas{width:100%;height:190px;display:block}
 .qmsg.ok{color:var(--ok)}
 .dirty{font-size:12px;color:var(--warn);font-weight:600}
 .qhint{grid-column:1/-1;font-size:12px;color:var(--muted)}
-.chg{border-top:1px solid var(--line);padding:13px 0}
-.chg:first-child{border-top:0;padding-top:0}
-.chg:last-child{padding-bottom:0}
+.costnow{width:100%;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);
+  display:flex;gap:22px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.costnow b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums;
+  display:block;font-size:16px;margin-top:2px}
+.costnow:empty{display:none}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:12px}
+.chg{border:1px solid var(--line);border-radius:var(--radius);padding:14px;
+  background:var(--bg)}
+.chg.idle{opacity:.72}
+.chg.down{border-color:#ef444455}
 .chg-head{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
 .chg-name{font-weight:650}
 .chg-tag{font-size:11px;padding:1px 8px;border-radius:99px;border:1px solid var(--line);
@@ -96,12 +103,21 @@ canvas{width:100%;height:190px;display:block}
 .chg-tag.on{border-color:var(--ok);color:var(--ok)}
 .chg-tag.wait{border-color:var(--warn);color:var(--warn)}
 .chg-tag.off{border-color:var(--bad);color:var(--bad)}
-.chg-num{margin-left:auto;font-variant-numeric:tabular-nums;font-size:20px}
+.chg-num{margin-left:auto;font-variant-numeric:tabular-nums;font-size:15px}
 .chg-num small{font-size:12px;color:var(--muted);font-weight:400}
-.chg-sub{font-size:12px;color:var(--muted);margin-top:4px;
-  display:flex;gap:14px;flex-wrap:wrap}
+.chg-sub{font-size:12px;color:var(--muted);margin-top:9px;
+  display:grid;grid-template-columns:repeat(2,1fr);gap:6px 12px}
+.chg-sub div{display:flex;justify-content:space-between;gap:8px}
+.chg-sub b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}
+.chg-foot{margin-top:10px;padding-top:9px;border-top:1px solid var(--line);
+  font-size:11px;color:var(--muted);display:flex;justify-content:space-between;
+  gap:8px;align-items:center}
+.chg-big{display:flex;align-items:baseline;gap:6px;margin-top:8px}
+.chg-big em{font-style:normal;font-size:30px;font-weight:250;line-height:1;
+  font-variant-numeric:tabular-nums}
+.chg-big span{font-size:12px;color:var(--muted)}
 .chg-sub code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
-.chg-bar{height:7px;background:var(--free);border-radius:4px;margin-top:7px;overflow:hidden}
+.chg-bar{height:7px;background:var(--free);border-radius:4px;margin-top:8px;overflow:hidden}
 .chg-bar i{display:block;height:100%;background:var(--car);transition:width .4s ease}
 .crow{display:grid;grid-template-columns:1.1fr 1.4fr 80px auto;gap:8px;
   align-items:center;margin-bottom:7px}
@@ -165,6 +181,7 @@ body.offline .card,body.offline .tabs{opacity:.5;filter:grayscale(.6)}
         <div class="big" id="setpoint">–<span>A</span></div>
       </div>
       <div class="reason" id="reason">Starting up…</div>
+      <div class="costnow" id="costnow"></div>
     </div>
   </div>
 
@@ -291,6 +308,11 @@ function renderBanners(s) {
   let out = '';
   if (s.error)
     out += banner('bad', `<b>Configuration problem.</b>&nbsp;${esc(s.error)} Fix it under Settings.`);
+  if (s.charging_permitted === false)
+    out += banner('warn',
+      '<b>Charging is switched off from Home Assistant.</b>&nbsp;' +
+      esc(s.gate_entity || 'The charge-enable entity') + ' is off, so every ' +
+      'charger is held at 0 A. Load balancing resumes as soon as it turns on.');
   if (s.dry_run)
     out += banner('warn', '<b>Dry run.</b>&nbsp;Decisions are logged but nothing is sent to the charger. Turn this off under Settings once you are happy — and block the Nanogrid Air first, or the two will fight.');
   // Distinguish "never answered" - most likely an address for a charger that
@@ -342,6 +364,16 @@ function renderPhases(s) {
   $('#phases').innerHTML = out;
 }
 
+function renderCost(s) {
+  const el = $('#costnow');
+  if (s.price === null || s.price === undefined) { el.innerHTML = ''; return; }
+  const cell = (k, v) => '<div><span>' + k + '</span><b>' + v + '</b></div>';
+  el.innerHTML =
+    cell('Price now', money(s.price) + '/kWh') +
+    cell('Charging costs', money(s.cost_now.per_hour) + '/h') +
+    cell('Sessions so far', money(s.cost_now.sessions));
+}
+
 function renderChargers(s) {
   const list = s.chargers || [];
   if (!list.length) {
@@ -349,39 +381,56 @@ function renderChargers(s) {
       '<p class="muted">No chargers configured. Add one under Settings.</p>';
     return;
   }
-  $('#chargers').innerHTML = list.map(c => {
-    let tag, cls;
-    if (!c.bound)          { tag = c.ever_seen ? 'offline' : 'never reached'; cls = 'off'; }
+  $('#chargers').innerHTML = '<div class="cards">' + list.map(c => {
+    let tag, cls, card = '';
+    if (!c.bound)          { tag = c.ever_seen ? 'offline' : 'never reached';
+                             cls = 'off'; card = ' down'; }
     else if (c.allocated)  { tag = 'charging'; cls = 'on'; }
     else if (c.wants)      { tag = 'waiting for capacity'; cls = 'wait'; }
-    else                   { tag = 'no car'; cls = ''; }
+    else                   { tag = 'no car'; cls = ''; card = ' idle'; }
 
-    // How much of its allowance the car is actually taking. A car well under
-    // its allowance is the signal that 'optimal' acts on.
+    // How much of its allowance the car is taking. A car well under its
+    // allowance is the signal 'optimal' acts on, so it earns a place here.
     const pct = c.allocated > 0 ? Math.min(100, c.drawn / c.allocated * 100) : 0;
-    const sub = [];
-    // Only State 2 is confirmed against real hardware; do not name the others.
-    if (c.state !== null && c.state !== undefined)
-      sub.push(c.state === 2 ? 'Charging' : 'State ' + esc(c.state));
-    if (c.power !== null && c.power !== undefined)
-      sub.push((c.power / 1000).toFixed(2) + ' kW');
-    if (c.energy !== null && c.energy !== undefined)
-      sub.push((c.energy / 1000).toFixed(1) + ' kWh');
-    sub.push('<code>' + esc(c.host) + '</code>');
-    if (c.serial) sub.push('<code>' + esc(c.serial) + '</code>');
+    const capped = c.cap != null && c.fuse_rating && c.cap < c.fuse_rating - 0.5;
+    const priced = LAST && LAST.price != null;
 
-    return `<div class="chg">
-      <div class="chg-head">
-        <span class="chg-name">${esc(c.name)}</span>
-        <span class="chg-tag ${cls}">${tag}</span>
-        <span class="chg-num">${c.allocated}<small> A allowed</small>
-          &nbsp;&middot;&nbsp;${c.bound ? c.drawn.toFixed(1) + '<small> A drawn</small>'
-            : '<small>draw unknown</small>'}</span>
-      </div>
-      <div class="chg-bar"><i style="width:${pct}%"></i></div>
-      <div class="chg-sub">${sub.join('<span></span>')}</div>
-    </div>`;
-  }).join('');
+    const row = (k, v) => '<div><span>' + k + '</span><b>' + v + '</b></div>';
+    const rows = [];
+    if (c.session) {
+      const ses = c.session;
+      rows.push(row(ses.active ? 'This session' : 'Last session',
+                    ses.energy_kwh.toFixed(2) + ' kWh'));
+      if (priced) rows.push(row('Cost', money(ses.cost)));
+      rows.push(row('Duration', ses.minutes + ' min'));
+    }
+    if (c.cost_per_hour != null) rows.push(row('Per hour', money(c.cost_per_hour) + '/h'));
+    if (c.power != null) rows.push(row('Power', (c.power / 1000).toFixed(2) + ' kW'));
+    if (c.energy != null) rows.push(row('Lifetime', (c.energy / 1000).toFixed(0) + ' kWh'));
+    if (capped) rows.push(row('Car limit', '~' + c.cap.toFixed(0) + ' A'));
+
+    const L = c.link || {};
+    const link = L.samples
+      ? (L.latest != null ? L.latest.toFixed(0) + ' ms' : 'no reply') +
+        (L.loss ? ' \u00b7 ' + L.loss + '% loss' : '')
+      : 'checking\u2026';
+
+    return '<div class="chg' + card + '">' +
+      '<div class="chg-head">' +
+        '<span class="chg-name">' + esc(c.name) + '</span>' +
+        '<span class="chg-tag ' + cls + '">' + tag + '</span>' +
+      '</div>' +
+      '<div class="chg-big">' +
+        '<em>' + c.allocated + '</em><span>A allowed</span>' +
+        '<em style="font-size:20px;margin-left:8px">' +
+          (c.bound ? c.drawn.toFixed(1) : '\u2013') + '</em><span>A drawn</span>' +
+      '</div>' +
+      '<div class="chg-bar"><i style="width:' + pct + '%"></i></div>' +
+      '<div class="chg-sub">' + rows.join('') + '</div>' +
+      '<div class="chg-foot"><span>' + sparkline(c.link) + link + '</span>' +
+        '<code>' + esc(c.host) + '</code></div>' +
+    '</div>';
+  }).join('') + '</div>';
 }
 
 function renderStats(s) {
@@ -465,6 +514,7 @@ function renderState(s) {
   $('#reason').textContent =
     s.decision.reason + (s.decision.allocation ? ' — ' + s.decision.allocation : '');
   renderBanners(s);
+  renderCost(s);
   renderQuick(s);
   renderPhases(s);
   renderChargers(s);
@@ -550,6 +600,32 @@ function legend(el, items) {
   el.innerHTML = items.map(i =>
     `<span><i class="sw" style="background:${i.color}"></i>${i.label}` +
     (i.value != null ? ` <b>${i.value}</b>` : '') + '</span>').join('');
+}
+
+function money(v) {
+  if (v === null || v === undefined) return '–';
+  const cur = (LAST && LAST.currency) || '';
+  return v.toFixed(2) + (cur ? ' ' + esc(cur) : '');
+}
+
+function sparkline(link) {
+  // Inline SVG, so each card carries its own history without needing a canvas.
+  const pts = (link && link.series) || [];
+  const seen = pts.filter(v => v !== null && v !== undefined);
+  if (!seen.length) return '';
+  const w = 54, h = 12, max = Math.max(20, ...seen);
+  let d = '', started = false;
+  pts.forEach((v, i) => {
+    if (v === null || v === undefined) { started = false; return; }
+    const x = pts.length === 1 ? 0 : (i / (pts.length - 1)) * w;
+    const y = h - (v / max) * h;
+    d += (started ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1) + ' ';
+    started = true;
+  });
+  if (!d) return '';
+  return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h +
+    '" style="display:inline-block;vertical-align:middle;margin-right:5px">' +
+    '<path d="' + d + '" fill="none" stroke="currentColor" stroke-width="1"/></svg>';
 }
 
 const lastOf = a => { for (let i = a.length - 1; i >= 0; i--) if (a[i] != null) return a[i]; return null; };

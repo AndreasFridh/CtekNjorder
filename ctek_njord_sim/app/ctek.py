@@ -111,7 +111,7 @@ class CtekClient:
         self.charger_serial = charger_serial
         # Impersonating a plausible adapter serial keeps the charger's own logs
         # readable; any stable string appears to work.
-        self.adapter_serial = adapter_serial or "40542O36W4000074"
+        self.adapter_serial = adapter_serial or "40000B00Y0000002"
         self.dry_run = dry_run
         self.state = ChargerState()
         self.connected = threading.Event()

@@ -19,7 +19,7 @@ MAX_CHARGERS = 6
 
 @dataclass
 class Options:
-    charger_host: str = "192.168.5.40"
+    charger_host: str = ""
     charger_port: int = 1883
     charger_username: str = ""
     charger_password: str = ""
@@ -42,11 +42,16 @@ class Options:
     power_in_entity: str = ""
     power_out_entity: str = ""
 
+    charge_enable_entity: str = ""
+    price_entity: str = ""
+    currency: str = "SEK"
+
     stale_timeout: int = 30
     fallback_current: int = 6
     raise_delay: int = 30
     settle_window: float = 10.0
     settle_tolerance: float = 1.5
+    ping_interval: int = 30
     control_interval: float = 15.0
     meter_interval: float = 10.0
 

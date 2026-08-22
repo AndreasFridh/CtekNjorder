@@ -26,6 +26,8 @@ CTEK. It was reverse-engineered from live captures — see **[PROTOCOL.md](PROTO
 | Live control (`dry_run: false`) | Verified against the simulator; **not yet against the real charger** |
 | Home Assistant data source | Done — pick your entities in the web UI |
 | Web UI | Done — Ingress dashboard and full settings editor, sidebar-capable |
+| Price-aware charging | Done — charge-enable gate and per-session cost |
+| Link monitoring | Done — round-trip time and loss per charger |
 
 ## Install
 
@@ -83,6 +85,19 @@ divided.
 Meter data is republished to the charger every 10 s and the setpoint every 15 s,
 matching the real adapter's cadence.
 
+### Charging only when you want it
+
+Point **charge enable** at an entity your price automation switches, and
+charging is held at 0 A while it is off.
+
+Unset, unavailable, or a state the add-on does not recognise all mean
+*permitted*. The gate is there to save money, not to keep anyone safe, and a
+dropped sensor must not silently leave a car uncharged overnight. It can only
+withhold current — load balancing still applies underneath it.
+
+Set **electricity price** as well and each session is costed as it goes, at the
+price in force at the time, with per-hour and total figures on the dashboard.
+
 ### Safety behaviour
 
 - **Cold start at 6 A.** Like the real adapter, it opens at the minimum and only
@@ -103,15 +118,16 @@ matching the real adapter's cadence.
 
 ## Before you install
 
-**Block the Nanogrid Air first.** Two controllers publishing to the same topic
-will fight. In UniFi: Client Devices → the Nanogrid Air → **Block**. This is
-reversible and needs no reset; the device recovers on its own when unblocked.
+**Only one controller may be running.** The charger obeys whoever publishes a
+setpoint, so if the original adapter is still on the network the two will
+disagree and the charging current will flap. Take it off the network — or
+simply unplug it — before turning `dry_run` off.
 
 ## Configuration
 
 | Option | Default | Notes |
 |---|---|---|
-| `charger_host` | `192.168.5.40` | The charger. It *is* the broker. |
+| `chargers` | — | **Required.** Up to six, each with its own address. The charger *is* the broker. |
 | `charger_port` | `1883` | Plain MQTT, no TLS. |
 | `charger_username` / `charger_password` | empty | Not required — the broker accepts anonymous connections. Present in case a firmware update changes that. |
 | `charger_serial` | empty | Auto-discovered from retained topics when blank. |
@@ -134,9 +150,9 @@ reversible and needs no reset; the device recovers on its own when unblocked.
 These run against a live charger from any machine on the network.
 
 ```bash
-python tools/probe.py      --host 192.168.5.40          # find the broker, scan ports
-python -u tools/test_write.py --host 192.168.5.40       # check publish permission
-python tools/sniff.py      --host 192.168.5.40 --duration 300   # capture traffic
+python tools/probe.py      --host 192.168.1.50          # find the broker, scan ports
+python -u tools/test_write.py --host 192.168.1.50       # check publish permission
+python tools/sniff.py      --host 192.168.1.50 --duration 300   # capture traffic
 python tools/analyze.py    captures/<file>.jsonl        # derive the schema
 python tools/replay.py     captures/<file>.jsonl --main-fuse 25 # replay through the balancer
 python tools/replay.py     captures/<file>.jsonl --sweep        # compare fuse sizes
@@ -191,8 +207,9 @@ JSON file and `CTEK_HASS_WS` at a Home Assistant WebSocket URL.
 
 ## Planned
 
-See [todo.md](todo.md) — charge-enable and electricity-price inputs from Home
-Assistant, per-charger network monitoring, and a richer set of charger cards.
+See [todo.md](todo.md). The substantive one is characterising what the charger
+does when its controller goes silent — it needs hardware, and until it is known
+a crash of this add-on is treated as unsafe rather than assumed to fail safe.
 
 ## Known unknowns
 

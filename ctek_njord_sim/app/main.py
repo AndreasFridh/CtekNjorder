@@ -39,8 +39,10 @@ from .balancer import (
     Balancer, BalancerConfig, BaselineFilter, car_draw_for_baseline,
 )
 from .config import Options
+from .costs import CostTracker, charging_allowed, price_per_kwh
 from .ctek import CtekClient
 from .hass import HassClient
+from .netmon import LinkMonitor
 from .history import History
 from .optionspec import LIVE_KEYS
 from .protocol import PHASE_ROTATIONS
@@ -71,7 +73,8 @@ class Service:
         self.hass = HassClient(
             opts.current_entities
             + opts.voltage_entities
-            + [e for e in (opts.power_in_entity, opts.power_out_entity) if e]
+            + [e for e in (opts.power_in_entity, opts.power_out_entity,
+                           opts.charge_enable_entity, opts.price_entity) if e]
         )
 
         self.clients: list[CtekClient] = [
@@ -105,6 +108,8 @@ class Service:
             )
         )
         self.demand = DemandTracker()
+        self.costs = CostTracker()
+        self.links = LinkMonitor()
         self.baseline_filter = BaselineFilter()
         self.web = WebUI(self)
         self.history = History()
@@ -113,6 +118,7 @@ class Service:
         self.last_demands: dict = {}
         self._alloc_changed_at: dict[str, float] = {}
         self.alloc_reason = "starting up"
+        self.permitted = True
         self.last_decision = None
         self.last_house: list[float] | None = None
         self.last_error: str | None = None
@@ -142,6 +148,18 @@ class Service:
         if p_in is None:
             p_in = sum(c * v for c, v in zip(current, voltage)) / 1000.0
         return p_in, (p_out or 0.0)
+
+    def price(self) -> float | None:
+        """Current price per kWh, normalised for the entity's unit."""
+        if not self.opts.price_entity:
+            return None
+        return price_per_kwh(self.hass.value(self.opts.price_entity),
+                             self.hass.units.get(self.opts.price_entity))
+
+    def charging_permitted(self) -> bool:
+        if not self.opts.charge_enable_entity:
+            return True
+        return charging_allowed(self.hass.state(self.opts.charge_enable_entity))
 
     @staticmethod
     def _to_meter_phases(current: list[float], rotation: str | None) -> list[float]:
@@ -268,12 +286,20 @@ class Service:
                 ))
 
             self.last_demands = {d.id: d for d in demands}
+            # The charge-enable gate may only ever withhold current. It caps
+            # the total at zero rather than bypassing the balancer, so load
+            # balancing still applies underneath it - "enabled" never means
+            # "unlimited".
+            permitted = self.charging_permitted()
             allocation = allocate(
                 decision.headroom or [0.0, 0.0, 0.0],
                 demands,
                 strategy=opts.allocation_strategy,
-                total_cap=float(decision.setpoint),
+                total_cap=0.0 if not permitted else float(decision.setpoint),
             )
+            if not permitted:
+                allocation.reason = "charging disabled from Home Assistant"
+            self.permitted = permitted
             settled = apply_dwell(
                 now, allocation.per_charger, self.allocation,
                 self._alloc_changed_at, ALLOC_DWELL,
@@ -294,6 +320,15 @@ class Service:
                 for client in bound:
                     client.publish_meter_data(current, voltage, p_in, p_out)
                 self._last_meter = now
+
+            price = self.price()
+            for client in bound:
+                st = states[client.id]
+                self.costs.update(
+                    wall, client.id,
+                    max(st["current"]) if st["current"] else 0.0,
+                    st["energy"], price,
+                )
 
             self.history.add(
                 wall,
@@ -320,10 +355,31 @@ class Service:
 
     def snapshot(self) -> dict:
         d = self.last_decision
+        price = self.price()
         chargers = []
+        session_total = 0.0
+        hourly_total = 0.0
         for client in self.clients:
             st = client.state.snapshot()
             drawn = max(st["current"]) if st["current"] else 0.0
+
+            active = self.costs.session_for(client.id)
+            last = self.costs.last_completed(client.id)
+            shown = active or last
+            session_info = None
+            if shown is not None:
+                session_info = {
+                    "active": active is not None,
+                    "energy_kwh": round(shown.energy_wh / 1000.0, 3),
+                    "cost": round(shown.cost, 3),
+                    "minutes": round(shown.duration / 60.0),
+                }
+            if active is not None:
+                session_total += active.cost
+            hourly = self.costs.cost_per_hour(st["power"], price) if active else None
+            if hourly:
+                hourly_total += hourly
+
             chargers.append({
                 "id": client.id,
                 "name": client.name,
@@ -347,6 +403,10 @@ class Service:
                 # have concluded it is limited and handed the surplus on.
                 "cap": (round(self.last_demands[client.id].cap, 1)
                         if client.id in self.last_demands else None),
+                "session": session_info,
+                "cost_per_hour": (round(hourly, 4) if hourly is not None else None),
+                "link": {**self.links.stats(client.id),
+                         "series": self.links.series(client.id, 40)},
                 "age": None if st["age"] == float("inf") else round(st["age"], 1),
             })
 
@@ -355,6 +415,14 @@ class Service:
             "uptime": time.time() - self.started_at,
             "dry_run": self.opts.dry_run,
             "strategy": self.opts.allocation_strategy,
+            "charging_permitted": self.permitted,
+            "gate_entity": self.opts.charge_enable_entity,
+            "price": round(price, 4) if price is not None else None,
+            "currency": self.opts.currency,
+            "cost_now": {
+                "sessions": round(session_total, 3),
+                "per_hour": round(hourly_total, 3),
+            },
             "connected": {
                 "chargers_total": len(self.clients),
                 "chargers_bound": sum(1 for c in self.clients if c.topics is not None),
@@ -438,6 +506,16 @@ class Service:
 
     # ---------- lifecycle ----------
 
+    async def link_loop(self) -> None:
+        """Measure the path to each charger, off the event loop."""
+        while True:
+            await asyncio.sleep(self.opts.ping_interval)
+            await asyncio.gather(
+                *(asyncio.to_thread(self.links.measure, c.id, c.host, c.port)
+                  for c in self.clients),
+                return_exceptions=True,
+            )
+
     async def reconnect_loop(self) -> None:
         """Keep trying anything that is not answering."""
         while True:
@@ -459,6 +537,7 @@ class Service:
             asyncio.create_task(self.hass.run()),
             asyncio.create_task(self.control_loop()),
             asyncio.create_task(self.reconnect_loop()),
+            asyncio.create_task(self.link_loop()),
         ]
         try:
             await asyncio.gather(*tasks)

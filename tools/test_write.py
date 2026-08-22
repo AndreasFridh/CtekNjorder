@@ -9,8 +9,8 @@ Publishes to harmless scratch topics only - it never touches the control topic.
 Write access is confirmed by subscribing to the same topic and seeing our own
 message come back from the broker.
 
-  python -u tools/test_write.py --host 192.168.5.40
-  python -u tools/test_write.py --host 192.168.5.40 --username admin --password xxx
+  python -u tools/test_write.py --host 192.168.1.50
+  python -u tools/test_write.py --host 192.168.1.50 --username admin --password xxx
 """
 import argparse
 import sys

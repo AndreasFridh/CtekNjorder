@@ -30,8 +30,8 @@ def client():
 # ---------- the serial arrives inside an attacker-writable topic name ----------
 
 @pytest.mark.parametrize("serial", [
-    "40353I37W4008218",
-    "40542O36W4000074",
+    "40000A00X0000001",
+    "40000B00Y0000002",
     "abc1",
     "A-b_c.1",
 ])
@@ -63,21 +63,21 @@ def test_hostile_serial_is_not_adopted_even_if_it_arrives_first():
     c._bind("<img src=x onerror=alert(document.domain)>")
     assert c.topics is None, "hostile serial was adopted"
 
-    c._bind("40353I37W4008218")
+    c._bind("40000A00X0000001")
     assert c.topics is not None
-    assert c.topics.charger == "40353I37W4008218"
+    assert c.topics.charger == "40000A00X0000001"
 
 
 def test_a_bound_serial_cannot_be_hijacked_afterwards():
     c = client()
-    c._bind("40353I37W4008218")
+    c._bind("40000A00X0000001")
     c._bind("../../evil")
-    assert c.topics.charger == "40353I37W4008218"
+    assert c.topics.charger == "40000A00X0000001"
 
 
 def test_topics_built_from_a_valid_serial_stay_on_their_own_prefix():
     c = client()
-    c._bind("40353I37W4008218")
+    c._bind("40000A00X0000001")
     for topic in c.topics.subscriptions() + [c.topics.control_current]:
         assert topic.startswith("ctek/")
         assert ".." not in topic
@@ -148,17 +148,17 @@ def test_binding_twice_resubscribes():
     c = client()
     c._c = Recorder()
 
-    c._bind("40353I37W4008218")
+    c._bind("40000A00X0000001")
     first = len(c._c.subscribed)
     assert first > 0
 
     c._announced = False          # as a real disconnect resets it
-    c._bind("40353I37W4008218")   # the reconnect
+    c._bind("40000A00X0000001")   # the reconnect
     assert len(c._c.subscribed) == first * 2, "reconnect did not re-subscribe"
 
 
 def test_a_second_charger_cannot_hijack_a_bound_client():
     c = client()
-    c._bind("40353I37W4008218")
+    c._bind("40000A00X0000001")
     c._bind("40353I37W4009999")
-    assert c.topics.charger == "40353I37W4008218"
+    assert c.topics.charger == "40000A00X0000001"

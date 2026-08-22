@@ -7,8 +7,8 @@ Not documented by CTEK; derived entirely from observed traffic.
 
 | Role | Serial | Firmware | Notes |
 |---|---|---|---|
-| Charger (Njord GO) | `40353I37W4008218` | `r3.2.2-0-g673feded_mmiR1` | **Runs the MQTT broker** on `192.168.5.40:1883` |
-| Nanogrid Air | `40542O36W4000074` | `ngair.1.3.2-0-g388a64c` | Meter gateway + load-balancing controller — **this is what we replace** |
+| Charger (Njord GO) | `40000A00X0000001` | `r3.2.2-0-g673feded_mmiR1` | **Runs the MQTT broker** on `192.168.1.50:1883` |
+| Nanogrid Air | `40000B00Y0000002` | `ngair.1.3.2-0-g388a64c` | Meter gateway + load-balancing controller — **this is what we replace** |
 | Meter | — | — | `meterType: "P1"`, `vendor: "KAM"` (Kamstrup, via P1/HAN) |
 
 The charger is the broker. **Authentication is not enforced**: anonymous
@@ -51,7 +51,7 @@ land. `State: 2` = charging (the only value seen; the car never unplugged).
 
 **`ctek/ng-v2/debug`** — retained, every **6.0 s**
 ```json
-{"ids": "40353I37W4008218,", "status": [2,0,9,64]}
+{"ids": "40000A00X0000001,", "status": [2,0,9,64]}
 ```
 Confirmed charger-published: it kept a metronomic 6 s cadence straight through
 an adapter restart. `ids` is a comma-terminated list of known charger serials.
@@ -66,7 +66,7 @@ charger; the `nga` tree is keyed by the adapter's own serial.
 
 **`ctek/client/{CB}/sma/adapterinfo`** and **`ctek/nga/{CB}/adapterinfo`** — retained
 ```json
-{"serialno": "40542O36W4000074", "fwVersion": "ngair.1.3.2-0-g388a64c", "vendor": "CTEK"}
+{"serialno": "40000B00Y0000002", "fwVersion": "ngair.1.3.2-0-g388a64c", "vendor": "CTEK"}
 ```
 Note the asymmetry: `adapterinfo` uses the **charger's** serial on both trees,
 while `meterinfo`/`meterdata` use the **adapter's** serial on the `nga` tree.

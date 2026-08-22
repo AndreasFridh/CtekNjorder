@@ -1,5 +1,5 @@
 name: CTEK Njord Load Balancer
-version: "0.9.4"
+version: "0.10.0"
 slug: ctek_njord_sim
 description: >-
   Replaces the CTEK Nanogrid Air. Impersonates the adapter on the charger's own
@@ -25,7 +25,7 @@ panel_title: Njord
 options:
   chargers:
     - name: "Charger 1"
-      host: "192.168.5.40"
+      host: ""
       port: 1883
       serial: ""
       enabled: true
@@ -47,11 +47,15 @@ options:
   voltage_entities: []
   power_in_entity: ""
   power_out_entity: ""
+  charge_enable_entity: ""
+  price_entity: ""
+  currency: "SEK"
   stale_timeout: 30
   fallback_current: 6
   raise_delay: 30
   settle_window: 10
   settle_tolerance: 1.5
+  ping_interval: 30
   control_interval: 15
   meter_interval: 10
   dry_run: true
@@ -82,11 +86,15 @@ schema:
     - str?
   power_in_entity: str?
   power_out_entity: str?
+  charge_enable_entity: str?
+  price_entity: str?
+  currency: str?
   stale_timeout: int(5,600)
   fallback_current: int(0,16)
   raise_delay: int(0,600)
   settle_window: float(0,120)
   settle_tolerance: float(0.1,10)
+  ping_interval: int(5,600)
   control_interval: float(1,60)
   meter_interval: float(1,60)
   dry_run: bool
