@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass
 class Spec:
     key: str
     label: str
-    type: str  # int | float | str | password | bool | select | entity | entity3
+    type: str  # int|float|str|password|bool|select|entity|entity3|chargers
     group: str
     help: str = ""
     min: float | None = None
@@ -28,19 +28,24 @@ class Spec:
 
 
 SPECS: tuple[Spec, ...] = (
-    # --- charger ---
-    Spec("charger_host", "Charger address", "str", "Charger", restart=True,
-         help="IP of the Njord. The charger hosts the MQTT broker itself."),
-    Spec("charger_port", "MQTT port", "int", "Charger", min=1, max=65535,
-         restart=True, help="Normally 1883. Plain MQTT, no TLS."),
-    Spec("charger_serial", "Charger serial", "str", "Charger", restart=True,
-         help="Leave blank to discover it from the broker's retained topics."),
-    Spec("adapter_serial", "Adapter serial", "str", "Charger", restart=True,
+    # --- chargers ---
+    Spec("chargers", "Chargers", "chargers", "Chargers", restart=True,
+         help="Each charger hosts its own MQTT broker, so each needs its own "
+              "address. Leave a row's address blank to ignore it. Serial is "
+              "discovered automatically when left empty."),
+    Spec("allocation_strategy", "Sharing", "select", "Chargers",
+         choices=("optimal", "even"),
+         help="How spare current is split between cars that are charging. "
+              "'optimal' notices a car that is not taking everything it was "
+              "offered - because of its own onboard limit, or because it is "
+              "tapering near full - and gives the surplus to a car that can "
+              "use it. 'even' always splits equally."),
+    Spec("adapter_serial", "Adapter serial", "str", "Chargers", restart=True,
          advanced=True,
          help="The serial we announce as. Any stable string works."),
-    Spec("charger_username", "MQTT username", "str", "Charger", restart=True,
+    Spec("charger_username", "MQTT username", "str", "Chargers", restart=True,
          advanced=True, help="Not required - the broker accepts anonymous clients."),
-    Spec("charger_password", "MQTT password", "password", "Charger", restart=True,
+    Spec("charger_password", "MQTT password", "password", "Chargers", restart=True,
          advanced=True, help="Not required."),
 
     # --- limits ---
@@ -48,9 +53,10 @@ SPECS: tuple[Spec, ...] = (
          help="Your property's MAIN breaker, per phase - not the charger's. "
               "If unsure, pick the lower value: too low charges slowly, "
               "too high trips the breaker."),
-    Spec("max_charge_current", "Max charge current", "int", "Limits",
+    Spec("max_charge_current", "Max per charger", "int", "Limits",
          min=6, max=32, unit="A",
-         help="Your own cap. The charger's own rating still applies on top."),
+         help="The most any single charger may be given. Each charger's own "
+              "rating still applies on top, and the main fuse always wins."),
     Spec("safety_margin", "Safety margin", "float", "Limits",
          min=0, max=10, step=0.5, unit="A",
          help="Amps held back from the fuse."),
@@ -143,6 +149,39 @@ def coerce(key: str, value):
         if value not in spec.choices:
             raise ValueError(f"{spec.label} must be one of {', '.join(spec.choices)}")
         return value
+
+    if spec.type == "chargers":
+        rows = []
+        for row in (value or []):
+            if not isinstance(row, dict):
+                continue
+            host = str(row.get("host") or "").strip()
+            if not host:
+                continue          # a blank address is how a row is disabled
+            try:
+                port = int(row.get("port") or 1883)
+            except (TypeError, ValueError):
+                raise ValueError(f"{host}: port must be a number")
+            if not 1 <= port <= 65535:
+                raise ValueError(f"{host}: port must be between 1 and 65535")
+            rows.append({
+                "name": str(row.get("name") or "").strip() or host,
+                "host": host,
+                "port": port,
+                "serial": str(row.get("serial") or "").strip(),
+                "enabled": bool(row.get("enabled", True)),
+            })
+        if not rows:
+            raise ValueError("At least one charger address is required")
+        seen = set()
+        for r in rows:
+            key = (r["host"], r["port"])
+            if key in seen:
+                raise ValueError(f"{r['host']}:{r['port']} is listed twice")
+            seen.add(key)
+        if len(rows) > 6:
+            raise ValueError("At most 6 chargers")
+        return rows
 
     if spec.type in ("entity3",):
         items = [str(v).strip() for v in (value or [])]

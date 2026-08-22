@@ -38,13 +38,41 @@ Everything is configurable from the UI; you never need the Configuration tab.
   the fuse or the margin while a car is charging. Connection and entity changes
   are flagged as needing a restart, and there is a button for that.
 
+## Several chargers
+
+Add up to six, each with its own address - each charger hosts its own MQTT
+broker, so there is nothing shared to point at. Leave a row's address blank to
+ignore it.
+
+The meter sees every car at once, so the house baseline is the reading minus
+all of them, and whatever headroom remains is divided.
+
+**Sharing** decides how:
+
+- **optimal** (default) notices when a car is not taking everything it was
+  offered - because of its own onboard limit, or because it is tapering near
+  full - and hands the surplus to a car that can use it.
+- **even** always splits equally. More predictable, but it leaves current idle
+  whenever one car cannot use its share.
+
+A charger with no car plugged in is given nothing rather than a share, so it
+never strands current a waiting car could use. That is worked out from
+behaviour - a charger that is offered current and does not take it - because
+only the charging value of the charger's `State` field has ever been confirmed
+against real hardware.
+
+When there is not enough for everyone, fewer cars charge properly rather than
+all of them being pushed below the 6 A floor where a car must stop anyway. Cars
+already charging keep priority, so the choice does not flip back and forth.
+
 ## Setup
 
-### 1. Find your charger
+### 1. Find your chargers
 
 The charger hosts the MQTT broker itself. Its address is shown in the CTEK app
 under the charger's network details, as `mqtt://<ip>` with a port (normally
-1883). Put that IP in **Charger address** on the Settings tab.
+1883). Put that IP in the **Chargers** table on the Settings tab, one row per
+charger.
 
 No username or password is needed — the broker accepts anonymous connections.
 The credential fields exist only in case a future firmware locks that down.

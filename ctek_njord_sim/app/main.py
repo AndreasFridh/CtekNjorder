@@ -7,12 +7,22 @@ the terms of the GNU Affero General Public License as published by the Free
 Software Foundation, either version 3 of the License, or (at your option) any
 later version. See the LICENSE file, or <https://www.gnu.org/licenses/>.
 
-Entry point: wires Home Assistant, the balancer, the charger and the web UI
+Entry point: wires Home Assistant, the balancer, the chargers and the web UI
 together.
 
-Control loop runs at 1 Hz. The setpoint is republished on a heartbeat so the
-charger never times out, and immediately whenever the decision changes, so a
-sudden household load is shed without waiting for the next heartbeat.
+Each charger hosts its own MQTT broker, so several chargers means several
+connections. The meter is singular though, and sees all of them at once, so the
+house baseline is the meter reading minus *every* car - and whatever that
+leaves has to be divided rather than handed to one charger.
+
+Two decisions, deliberately kept apart:
+
+    balancer    how much current may EV charging take in total right now
+    allocator   how that total is split between the chargers
+
+Control loop runs at 1 Hz. Setpoints are republished on a heartbeat so no
+charger times out, and immediately whenever a decision changes, so a sudden
+household load is shed without waiting for the next heartbeat.
 """
 from __future__ import annotations
 
@@ -22,18 +32,27 @@ import signal
 import sys
 import time
 
-from .balancer import Balancer, BalancerConfig, car_draw_for_baseline
+from .allocator import (
+    ChargerDemand, DemandTracker, allocate, apply_dwell,
+)
+from .balancer import (
+    Balancer, BalancerConfig, BaselineFilter, car_draw_for_baseline,
+)
 from .config import Options
 from .ctek import CtekClient
 from .hass import HassClient
 from .history import History
 from .optionspec import LIVE_KEYS
+from .protocol import PHASE_ROTATIONS
 from .web import WebUI
 
 _LOG = logging.getLogger("ctek")
 
 DEFAULT_VOLTAGE = 230.0
 TICK = 1.0
+
+# Seconds a charger holds its setpoint before a one-amp nudge is applied.
+ALLOC_DWELL = 20.0
 
 
 def setup_logging(level: str) -> None:
@@ -54,22 +73,30 @@ class Service:
             + opts.voltage_entities
             + [e for e in (opts.power_in_entity, opts.power_out_entity) if e]
         )
-        self.ctek = CtekClient(
-            host=opts.charger_host,
-            port=opts.charger_port,
-            charger_serial=opts.charger_serial,
-            adapter_serial=opts.adapter_serial,
-            username=opts.charger_username,
-            password=opts.charger_password,
-            dry_run=opts.dry_run,
-            meter_interval=opts.meter_interval,
-        )
+
+        self.clients: list[CtekClient] = [
+            CtekClient(
+                host=c["host"],
+                port=c["port"],
+                charger_serial=c.get("serial", ""),
+                adapter_serial=opts.adapter_serial,
+                username=opts.charger_username,
+                password=opts.charger_password,
+                dry_run=opts.dry_run,
+                meter_interval=opts.meter_interval,
+                name=c["name"],
+            )
+            for c in opts.active_chargers()
+        ]
+
         self.balancer = Balancer(
             BalancerConfig(
                 main_fuse=opts.main_fuse,
                 max_charge_current=opts.max_charge_current,
                 safety_margin=opts.safety_margin,
-                phase_rotation=opts.phase_rotation,
+                # The summed car draw is already expressed in meter phases,
+                # because rotation is applied per charger before summing.
+                phase_rotation="RST",
                 raise_delay=opts.raise_delay,
                 stale_timeout=opts.stale_timeout,
                 fallback_current=opts.fallback_current,
@@ -77,9 +104,15 @@ class Service:
                 settle_tolerance=opts.settle_tolerance,
             )
         )
+        self.demand = DemandTracker()
+        self.baseline_filter = BaselineFilter()
         self.web = WebUI(self)
-
         self.history = History()
+
+        self.allocation: dict[str, int] = {c.id: 0 for c in self.clients}
+        self.last_demands: dict = {}
+        self._alloc_changed_at: dict[str, float] = {}
+        self.alloc_reason = "starting up"
         self.last_decision = None
         self.last_house: list[float] | None = None
         self.last_error: str | None = None
@@ -110,35 +143,216 @@ class Service:
             p_in = sum(c * v for c, v in zip(current, voltage)) / 1000.0
         return p_in, (p_out or 0.0)
 
+    @staticmethod
+    def _to_meter_phases(current: list[float], rotation: str | None) -> list[float]:
+        """
+        Express one charger's per-phase draw in meter phases.
+
+        Each charger reports its own StationPhaseRotation and they need not
+        agree, so this has to happen per charger, before anything is summed.
+        """
+        rot = PHASE_ROTATIONS.get(rotation or "RST", (0, 1, 2))
+        out = [0.0, 0.0, 0.0]
+        for station_phase, meter_phase in enumerate(rot):
+            if station_phase < len(current):
+                out[meter_phase] += current[station_phase]
+        return out
+
+    def _phases_of(self, state: dict) -> tuple[int, ...]:
+        """Which meter phases this charger's car actually loads."""
+        rot = PHASE_ROTATIONS.get(state.get("phase_rotation") or "RST", (0, 1, 2))
+        uses = state.get("ev_uses_phase") or [1, 1, 1]
+        phases = tuple(rot[i] for i in range(3) if i < len(uses) and uses[i])
+        return phases or (0, 1, 2)
+
+    def _ceiling_for(self, state: dict) -> int:
+        """One charger's hard limit: its own rating, and the user's cap."""
+        rating = state.get("fuse_rating") or self.opts.max_charge_current
+        return int(min(self.opts.max_charge_current, rating))
+
+    # ---------- control ----------
+
+    async def control_loop(self) -> None:
+        opts = self.opts
+        while True:
+            await asyncio.sleep(TICK)
+            now = asyncio.get_running_loop().time()
+            wall = time.time()
+
+            bound = [c for c in self.clients if c.topics is not None]
+            if not bound:
+                continue
+
+            current = self.house_current()
+            self.last_house = current
+            age = self.hass.newest_age(opts.current_entities)
+            house_ts = self.hass.reading_ts(opts.current_entities)
+
+            states = {c.id: c.state.snapshot() for c in bound}
+
+            # Every car is in the meter reading, so every car has to come back
+            # out of it before what remains can be called house load.
+            total_car = [0.0, 0.0, 0.0]
+            for client in bound:
+                st = states[client.id]
+                raw = client.state.current_at(house_ts) if house_ts else st["current"]
+                aligned = car_draw_for_baseline(raw, st["age"], opts.stale_timeout)
+                mapped = self._to_meter_phases(aligned, st["phase_rotation"])
+                for p in range(3):
+                    total_car[p] += mapped[p]
+
+            # How much may EV charging take in total? Cold start, the raise
+            # delay and the stale-data fallback all apply to this one number.
+            self.balancer.cfg.min_allowed_current = min(
+                (states[c.id]["min_allowed_current"] or 6) for c in bound
+            )
+            aggregate_ceiling = sum(self._ceiling_for(states[c.id]) for c in bound)
+            self.balancer.cfg.max_charge_current = aggregate_ceiling
+            self.balancer.cfg.charger_fuse_rating = aggregate_ceiling
+
+            used_phases: set[int] = set()
+            for client in bound:
+                used_phases.update(self._phases_of(states[client.id]))
+            ev_uses = [1 if p in used_phases else 0 for p in range(3)]
+
+            # Derive the baseline here rather than inside the balancer: with
+            # several chargers the subtraction spans several sources, and the
+            # result needs steadying before anything is decided from it.
+            raw_baseline = (
+                [max(0.0, current[p] - total_car[p]) for p in range(3)]
+                if current else None
+            )
+            # A car that has not yet reached its allowance is still moving, and
+            # the meter has not caught up with it. Any baseline derived right
+            # now is wrong, so it is not recorded.
+            slewing = any(
+                abs((max(states[c.id]["current"]) if states[c.id]["current"] else 0.0)
+                    - self.allocation.get(c.id, 0)) > 1.5
+                for c in bound if self.allocation.get(c.id, 0) > 0
+            )
+            baseline = self.baseline_filter.update(wall, raw_baseline, trust=not slewing)
+
+            decision = self.balancer.compute(
+                now=now,
+                house_current=baseline,
+                house_age=age,
+                charger_current=[0.0, 0.0, 0.0],   # already subtracted above
+                ev_uses_phase=ev_uses,
+            )
+            self.last_decision = decision
+
+            # ...and how that total is divided.
+            demands = []
+            for order, client in enumerate(bound):
+                st = states[client.id]
+                drawn = max(st["current"]) if st["current"] else 0.0
+                setpoint = self.allocation.get(client.id, 0)
+                self.demand.update(wall, client.id, setpoint, drawn)
+                ceiling = self._ceiling_for(st)
+                demands.append(ChargerDemand(
+                    id=client.id,
+                    order=order,
+                    phases=self._phases_of(st),
+                    min_current=st["min_allowed_current"] or 6,
+                    max_current=ceiling,
+                    cap=self.demand.cap_for(wall, client.id, setpoint, drawn, ceiling),
+                    wants=self.demand.wants_current(wall, client.id, st["state"], drawn),
+                    charging=drawn > self.demand.DRAWING_THRESHOLD,
+                ))
+
+            self.last_demands = {d.id: d for d in demands}
+            allocation = allocate(
+                decision.headroom or [0.0, 0.0, 0.0],
+                demands,
+                strategy=opts.allocation_strategy,
+                total_cap=float(decision.setpoint),
+            )
+            settled = apply_dwell(
+                now, allocation.per_charger, self.allocation,
+                self._alloc_changed_at, ALLOC_DWELL,
+            )
+            changed = settled != self.allocation
+            self.allocation = settled
+            self.alloc_reason = allocation.reason
+
+            if changed or (now - self._last_control) >= opts.control_interval:
+                for client in bound:
+                    client.publish_setpoint(self.allocation.get(client.id, 0))
+                self._last_control = now
+
+            # Every charger runs its own broker, so meter data goes to each.
+            if current and (now - self._last_meter) >= opts.meter_interval:
+                voltage = self.house_voltage()
+                p_in, p_out = self.house_power(current, voltage)
+                for client in bound:
+                    client.publish_meter_data(current, voltage, p_in, p_out)
+                self._last_meter = now
+
+            self.history.add(
+                wall,
+                [round(c, 1) for c in current] if current else None,
+                [round(total_car[p], 1) for p in range(3)],
+                sum(self.allocation.values()),
+            )
+
+            if (now - self._last_status) >= 60:
+                self._last_status = now
+                per = ", ".join(
+                    f"{c.name}={self.allocation.get(c.id, 0)}A"
+                    f"(drawing {max(states[c.id]['current'] or [0]):.0f})"
+                    for c in bound
+                )
+                _LOG.info(
+                    "house=%s A | cars=%s A | total allowed=%sA | %s | %s",
+                    [round(c, 1) for c in current] if current else "n/a",
+                    [round(c, 1) for c in total_car],
+                    decision.setpoint, per, allocation.reason,
+                )
+
     # ---------- state for the web UI ----------
 
     def snapshot(self) -> dict:
-        charger = self.ctek.state.snapshot()
         d = self.last_decision
-        ceiling = min(self.opts.max_charge_current,
-                      self.balancer.cfg.charger_fuse_rating)
+        chargers = []
+        for client in self.clients:
+            st = client.state.snapshot()
+            drawn = max(st["current"]) if st["current"] else 0.0
+            chargers.append({
+                "id": client.id,
+                "name": client.name,
+                "host": client.host,
+                "serial": client.charger_serial,
+                "connected": client.connected.is_set(),
+                "bound": client.topics is not None,
+                "state": st["state"],
+                "current": st["current"],
+                "drawn": round(drawn, 1),
+                "allocated": self.allocation.get(client.id, 0),
+                "max_allowed_current": st["max_allowed_current"],
+                "fuse_rating": st["fuse_rating"],
+                "min_allowed_current": st["min_allowed_current"],
+                "energy": st["energy"],
+                "power": st["power"],
+                "wants": self.demand.wants_current(
+                    time.time(), client.id, st["state"], drawn),
+                # What the car looks able to use. Below its ceiling means we
+                # have concluded it is limited and handed the surplus on.
+                "cap": (round(self.last_demands[client.id].cap, 1)
+                        if client.id in self.last_demands else None),
+                "age": None if st["age"] == float("inf") else round(st["age"], 1),
+            })
+
         return {
             "now": time.time(),
             "uptime": time.time() - self.started_at,
             "dry_run": self.opts.dry_run,
+            "strategy": self.opts.allocation_strategy,
             "connected": {
-                "charger": self.ctek.connected.is_set(),
+                "chargers_total": len(self.clients),
+                "chargers_bound": sum(1 for c in self.clients if c.topics is not None),
                 "hass": self.hass.connected,
-                "bound": self.ctek.topics is not None,
             },
-            "charger": {
-                "serial": self.ctek.charger_serial,
-                "state": charger["state"],
-                "current": charger["current"],
-                "ev_uses_phase": charger["ev_uses_phase"],
-                "max_allowed_current": charger["max_allowed_current"],
-                "fuse_rating": charger["fuse_rating"],
-                "min_allowed_current": charger["min_allowed_current"],
-                "phase_rotation": charger["phase_rotation"],
-                "energy": charger["energy"],
-                "power": charger["power"],
-                "age": None if charger["age"] == float("inf") else charger["age"],
-            },
+            "chargers": chargers,
             "house": {
                 "current": self.last_house,
                 "voltage": self.house_voltage(),
@@ -150,12 +364,13 @@ class Service:
                 "reason": d.reason if d else "starting up",
                 "headroom": d.headroom if d else [],
                 "baseline": d.baseline if d else [],
+                "allocation": self.alloc_reason,
             },
             "limits": {
                 "main_fuse": self.opts.main_fuse,
                 "safety_margin": self.opts.safety_margin,
                 "max_charge_current": self.opts.max_charge_current,
-                "ceiling": ceiling,
+                "ceiling": self.balancer.cfg.charger_fuse_rating,
                 "min_allowed_current": self.balancer.cfg.min_allowed_current,
             },
             "error": self.last_error,
@@ -188,14 +403,10 @@ class Service:
 
             if key == "main_fuse":
                 self.balancer.cfg.main_fuse = value
-            elif key == "max_charge_current":
-                self.balancer.cfg.max_charge_current = value
             elif key == "safety_margin":
                 self.balancer.cfg.safety_margin = value
             elif key == "fallback_current":
                 self.balancer.cfg.fallback_current = value
-            elif key == "phase_rotation":
-                self.balancer.cfg.phase_rotation = value
             elif key == "stale_timeout":
                 self.balancer.cfg.stale_timeout = value
             elif key == "raise_delay":
@@ -205,94 +416,23 @@ class Service:
             elif key == "settle_tolerance":
                 self.balancer.cfg.settle_tolerance = value
             elif key == "dry_run":
-                self.ctek.dry_run = value
-                _LOG.warning("Dry run %s via the web UI",
-                             "ENABLED" if value else "DISABLED - now controlling the charger")
+                for client in self.clients:
+                    client.dry_run = value
+                _LOG.warning(
+                    "Dry run %s via the web UI",
+                    "ENABLED" if value else "DISABLED - now controlling the chargers")
             elif key == "log_level":
                 logging.getLogger().setLevel(
                     getattr(logging, str(value).upper(), logging.INFO))
+            # max_charge_current, allocation_strategy and phase_rotation are
+            # read from opts on the next tick, so the setattr above suffices.
         return applied
 
-    # ---------- control ----------
-
-    async def control_loop(self) -> None:
-        opts = self.opts
-        while True:
-            await asyncio.sleep(TICK)
-            now = asyncio.get_running_loop().time()
-
-            if self.ctek.topics is None:
-                continue  # not bound to a charger yet
-
-            charger = self.ctek.state.snapshot()
-            current = self.house_current()
-            self.last_house = current
-            age = self.hass.newest_age(opts.current_entities)
-
-            # The charger's own configuration always wins over our defaults.
-            if charger["fuse_rating"]:
-                self.balancer.cfg.charger_fuse_rating = charger["fuse_rating"]
-            if charger["min_allowed_current"]:
-                self.balancer.cfg.min_allowed_current = charger["min_allowed_current"]
-            if charger["phase_rotation"]:
-                self.balancer.cfg.phase_rotation = charger["phase_rotation"]
-
-            # Subtract the car's draw AS OF the meter reading, not as of now.
-            # The meter lags, and a ramping car moves ~2 A/s, so using the
-            # present draw skews the baseline and makes the setpoint oscillate.
-            house_ts = self.hass.reading_ts(opts.current_entities)
-            charger_current = (
-                self.ctek.state.current_at(house_ts) if house_ts else charger["current"]
-            )
-
-            # If the charger has gone quiet we can no longer tell how much of
-            # the meter reading is the car, so we attribute none of it. See
-            # car_draw_for_baseline: over-subtracting is the dangerous way to
-            # be wrong.
-            charger_current = car_draw_for_baseline(
-                charger_current, charger["age"], opts.stale_timeout
-            )
-
-            decision = self.balancer.compute(
-                now=now,
-                house_current=current,
-                house_age=age,
-                charger_current=charger_current,
-                ev_uses_phase=charger["ev_uses_phase"],
-            )
-            self.last_decision = decision
-
-            self.history.add(
-                time.time(),
-                [round(c, 1) for c in current] if current else None,
-                [round(c, 1) for c in charger["current"]],
-                decision.setpoint,
-            )
-
-            # Heartbeat, plus an immediate send whenever the decision moves.
-            if decision.changed or (now - self._last_control) >= opts.control_interval:
-                self.ctek.publish_setpoint(decision.setpoint)
-                self._last_control = now
-
-            if current and (now - self._last_meter) >= opts.meter_interval:
-                voltage = self.house_voltage()
-                p_in, p_out = self.house_power(current, voltage)
-                self.ctek.publish_meter_data(current, voltage, p_in, p_out)
-                self._last_meter = now
-
-            if (now - self._last_status) >= 60:
-                self._last_status = now
-                _LOG.info(
-                    "house=%s A | car=%s A | setpoint=%sA (charger reports %sA) | %s",
-                    [round(c, 1) for c in current] if current else "n/a",
-                    [round(c, 1) for c in charger["current"]],
-                    decision.setpoint,
-                    charger["max_allowed_current"],
-                    decision.reason,
-                )
+    # ---------- lifecycle ----------
 
     async def run(self) -> None:
-        self.ctek.start()
+        for client in self.clients:
+            client.start()
         await self.web.start()
         tasks = [
             asyncio.create_task(self.hass.run()),
@@ -304,7 +444,8 @@ class Service:
             for t in tasks:
                 t.cancel()
             await self.web.stop()
-            self.ctek.stop()
+            for client in self.clients:
+                client.stop()
             self.history.close()
 
 
@@ -313,17 +454,20 @@ async def amain() -> int:
     setup_logging(opts.log_level)
 
     _LOG.info(
-        "main_fuse=%sA max_charge=%sA margin=%.1fA fallback=%sA dry_run=%s",
+        "main_fuse=%sA max_charge=%sA/charger margin=%.1fA fallback=%sA "
+        "strategy=%s dry_run=%s",
         opts.main_fuse, opts.max_charge_current, opts.safety_margin,
-        opts.fallback_current, opts.dry_run,
+        opts.fallback_current, opts.allocation_strategy, opts.dry_run,
     )
+    for c in opts.active_chargers():
+        _LOG.info("  charger: %s at %s:%s", c["name"], c["host"], c["port"])
     if opts.dry_run:
-        _LOG.warning("DRY RUN: decisions are logged but nothing is sent to the charger.")
+        _LOG.warning("DRY RUN: decisions are logged but nothing is sent to the chargers.")
 
     service = Service(opts)
 
-    # Configuration problems are reported in the UI rather than fatal, so the
-    # user can fix them there instead of editing YAML and restarting blind.
+    # Configuration problems are reported in the UI rather than being fatal, so
+    # they can be fixed there instead of by editing YAML and restarting blind.
     problems = opts.validate()
     if problems:
         service.last_error = " ".join(problems)
@@ -344,7 +488,8 @@ async def amain() -> int:
     await asyncio.wait([runner, asyncio.create_task(stop.wait())],
                        return_when=asyncio.FIRST_COMPLETED)
     runner.cancel()
-    service.ctek.stop()
+    for client in service.clients:
+        client.stop()
     service.history.close()
     _LOG.info("Stopped.")
     return 0

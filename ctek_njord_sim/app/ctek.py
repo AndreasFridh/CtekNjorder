@@ -96,9 +96,14 @@ class CtekClient:
         password: str = "",
         dry_run: bool = True,
         meter_interval: float = 10.0,
+        name: str = "",
     ):
         self.host = host
         self.port = port
+        # Each charger runs its own broker, so the address is the natural
+        # identity - the serial is not known until we have connected.
+        self.id = f"{host}:{port}"
+        self.name = name or self.id
         self.meter_interval = meter_interval
         self.charger_serial = charger_serial
         # Impersonating a plausible adapter serial keeps the charger's own logs
@@ -123,7 +128,7 @@ class CtekClient:
     # ---------- lifecycle ----------
 
     def start(self) -> None:
-        _LOG.info("Connecting to charger broker at %s:%s", self.host, self.port)
+        _LOG.info("[%s] connecting to charger broker at %s:%s", self.name, self.host, self.port)
         self._c.connect_async(self.host, self.port, keepalive=30)
         self._c.loop_start()
 
@@ -136,7 +141,7 @@ class CtekClient:
 
     def _on_connect(self, client, userdata, flags, rc, properties=None):
         if rc != 0:
-            _LOG.error("Charger refused MQTT connection: %s", rc)
+            _LOG.error("[%s] charger refused MQTT connection: %s", self.name, rc)
             return
         self.connected.set()
         if self.charger_serial:
@@ -148,18 +153,19 @@ class CtekClient:
     def _on_disconnect(self, client, userdata, flags, rc, properties=None):
         self.connected.clear()
         self._announced = False  # re-announce on reconnect
-        _LOG.warning("Disconnected from charger broker (%s)", rc)
+        _LOG.warning("[%s] disconnected from charger broker (%s)", self.name, rc)
 
     def _bind(self, serial: str) -> None:
         """Lock onto a charger serial and subscribe to its topics."""
         if not SERIAL_RE.match(serial or ""):
-            _LOG.warning("Ignoring implausible charger serial from the broker: %r", serial)
+            _LOG.warning("[%s] ignoring implausible charger serial from the broker: %r",
+                         self.name, serial)
             return
         if self.topics and self.topics.charger == serial:
             return
         self.charger_serial = serial
         self.topics = Topics(charger=serial, adapter=self.adapter_serial)
-        _LOG.info("Bound to charger %s", serial)
+        _LOG.info("[%s] bound to charger %s", self.name, serial)
         for t in self.topics.subscriptions():
             self._c.subscribe(t, qos=0)
         self.announce()
@@ -199,13 +205,13 @@ class CtekClient:
                 st.fuse_rating = parsed["fuse_rating"]
                 st.min_allowed_current = parsed["min_allowed_current"]
                 _LOG.info(
-                    "Charger limits: FuseRating=%sA MinAllowedCurrent=%sA",
-                    st.fuse_rating, st.min_allowed_current,
+                    "[%s] limits: FuseRating=%sA MinAllowedCurrent=%sA",
+                    self.name, st.fuse_rating, st.min_allowed_current,
                 )
             elif topic == t.station_config:
                 st.phase_rotation = payload.get("StationPhaseRotation")
-                _LOG.info("Charger FW=%s phaseRotation=%s",
-                          payload.get("FW"), st.phase_rotation)
+                _LOG.info("[%s] FW=%s phaseRotation=%s",
+                          self.name, payload.get("FW"), st.phase_rotation)
             elif topic == t.outlet_info:
                 st.energy = payload.get("energy")
                 st.power = payload.get("power")
@@ -237,8 +243,8 @@ class CtekClient:
         for topic in self.topics.interval_topics:
             self._publish(topic, every)
         self._announced = True
-        _LOG.info("Announced as adapter %s (meterdata every %ss)",
-                  self.adapter_serial, int(self.meter_interval))
+        _LOG.info("[%s] announced as adapter %s (meterdata every %ss)",
+                  self.name, self.adapter_serial, int(self.meter_interval))
 
     def publish_meter_data(
         self,

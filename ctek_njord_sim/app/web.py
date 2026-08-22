@@ -49,7 +49,14 @@ class WebUI:
     # ---------- handlers ----------
 
     async def index(self, request):
-        return web.FileResponse(os.path.join(WWW, "index.html"))
+        # Revalidate every load. The page is a single file that changes with
+        # each add-on update, and a cached copy against a newer API is worse
+        # than a slow load: the mismatch shows up as sections silently failing
+        # to render rather than as an obvious error.
+        return web.FileResponse(
+            os.path.join(WWW, "index.html"),
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
 
     async def state(self, request):
         return web.json_response(self.service.snapshot())
