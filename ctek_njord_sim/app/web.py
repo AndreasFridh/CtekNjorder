@@ -55,7 +55,11 @@ class WebUI:
         return web.json_response(self.service.snapshot())
 
     async def history(self, request):
-        return web.json_response(self.service.history_series())
+        try:
+            minutes = max(1, min(int(request.query.get("minutes", 30)), 7 * 24 * 60))
+        except ValueError:
+            minutes = 30
+        return web.json_response(self.service.history_series(minutes))
 
     async def get_settings(self, request):
         values = {s.key: getattr(self.service.opts, s.key) for s in optionspec.SPECS}

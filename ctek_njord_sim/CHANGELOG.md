@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.0
+
+- **Charts now survive a restart.** History is kept in two tiers: one sample a
+  second for the last 30 minutes in memory, and one bucket a minute for the
+  last 7 days written to `/data`. Each bucket keeps the worst value it saw, so
+  a one-second spike is still visible a week later instead of being averaged
+  away.
+- Ranges extended to 5m / 30m / 6h / 24h / 7d.
+- Straight after a restart the view falls back to the persisted buckets rather
+  than showing an empty chart until the live tier refills.
+- The charger serial gets its own full-width row instead of being squeezed
+  into a narrow grid column.
+
+About 500 KB on disk for a full week. Written append-only, roughly 60 bytes
+once a minute, so it is not meaningful wear on an SD card.
+
 ## 0.7.1
 
 - Licensed under AGPL-3.0-or-later. The web UI links to its own source, which

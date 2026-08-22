@@ -21,12 +21,12 @@ import logging
 import signal
 import sys
 import time
-from collections import deque
 
 from .balancer import Balancer, BalancerConfig, car_draw_for_baseline
 from .config import Options
 from .ctek import CtekClient
 from .hass import HassClient
+from .history import History
 from .optionspec import LIVE_KEYS
 from .web import WebUI
 
@@ -34,7 +34,6 @@ _LOG = logging.getLogger("ctek")
 
 DEFAULT_VOLTAGE = 230.0
 TICK = 1.0
-HISTORY_SECONDS = 1800  # 30 minutes at 1 Hz
 
 
 def setup_logging(level: str) -> None:
@@ -80,7 +79,7 @@ class Service:
         )
         self.web = WebUI(self)
 
-        self.history: deque = deque(maxlen=HISTORY_SECONDS)
+        self.history = History()
         self.last_decision = None
         self.last_house: list[float] | None = None
         self.last_error: str | None = None
@@ -166,15 +165,10 @@ class Service:
     def _finite(value: float):
         return None if value == float("inf") else round(value, 1)
 
-    def history_series(self) -> dict:
-        rows = list(self.history)
-        return {
-            "t": [r[0] for r in rows],
-            "house": [r[1] for r in rows],
-            "car": [r[2] for r in rows],
-            "setpoint": [r[3] for r in rows],
-            "main_fuse": self.opts.main_fuse,
-        }
+    def history_series(self, minutes: int = 30) -> dict:
+        series = self.history.series(minutes)
+        series["main_fuse"] = self.opts.main_fuse
+        return series
 
     # ---------- live reconfiguration ----------
 
@@ -268,12 +262,12 @@ class Service:
             )
             self.last_decision = decision
 
-            self.history.append((
-                round(time.time(), 1),
+            self.history.add(
+                time.time(),
                 [round(c, 1) for c in current] if current else None,
                 [round(c, 1) for c in charger["current"]],
                 decision.setpoint,
-            ))
+            )
 
             # Heartbeat, plus an immediate send whenever the decision moves.
             if decision.changed or (now - self._last_control) >= opts.control_interval:
@@ -311,6 +305,7 @@ class Service:
                 t.cancel()
             await self.web.stop()
             self.ctek.stop()
+            self.history.close()
 
 
 async def amain() -> int:
@@ -350,6 +345,7 @@ async def amain() -> int:
                        return_when=asyncio.FIRST_COMPLETED)
     runner.cancel()
     service.ctek.stop()
+    service.history.close()
     _LOG.info("Stopped.")
     return 0
 

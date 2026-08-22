@@ -48,7 +48,10 @@ header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16p
 .big{font-size:52px;font-weight:250;line-height:1;font-variant-numeric:tabular-nums}
 .big span{font-size:19px;color:var(--muted);margin-left:3px}
 .reason{color:var(--muted);font-size:13px;flex:1;min-width:200px}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:14px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px 18px}
+.stat.wide{grid-column:1/-1}
+.stat.wide .v{font-size:15px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  word-break:break-all;line-height:1.35}
 .stat .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .stat .v{font-size:19px;font-variant-numeric:tabular-nums;margin-top:2px}
 .phase{margin-bottom:13px}
@@ -176,8 +179,10 @@ body.offline .card,body.offline .tabs{opacity:.5;filter:grayscale(.6)}
       <h2>Meter current &mdash; from Home Assistant</h2>
       <div class="range" id="range">
         <button data-min="5">5m</button>
-        <button data-min="15">15m</button>
-        <button class="sel" data-min="30">30m</button>
+        <button data-min="30" class="sel">30m</button>
+        <button data-min="360">6h</button>
+        <button data-min="1440">24h</button>
+        <button data-min="10080">7d</button>
       </div>
     </div>
     <canvas id="chart-meter"></canvas>
@@ -308,12 +313,16 @@ function renderStats(s) {
     ['Charger reports', c.max_allowed_current === null ? '–' : c.max_allowed_current + ' A'],
     ['Power', c.power === null ? '–' : (c.power / 1000).toFixed(2) + ' kW'],
     ['Energy', c.energy === null ? '–' : (c.energy / 1000).toFixed(1) + ' kWh'],
-    ['Serial', esc(c.serial) || '–'],
+
     ['Meter age', s.house.age === null ? '–' : s.house.age + ' s'],
+    ['Charger serial', esc(c.serial) || '–', true],
   ];
   // `v` is already escaped where it came from outside; `k` is ours.
-  $('#stats').innerHTML = cells.map(([k, v]) =>
-    `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  // The serial is long and monospaced; give it its own full-width row rather
+  // than letting the auto-fit grid squeeze it into a 140px column.
+  $('#stats').innerHTML = cells.map(([k, v, wide]) =>
+    `<div class="stat${wide ? ' wide' : ''}"><div class="k">${k}</div>` +
+    `<div class="v">${v}</div></div>`).join('');
 }
 
 /* ---------- quick limits ---------- */
@@ -385,7 +394,7 @@ const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).
 document.querySelectorAll('#range button').forEach(b => b.onclick = () => {
   document.querySelectorAll('#range button').forEach(x => x.classList.toggle('sel', x === b));
   RANGE_MIN = +b.dataset.min;
-  if (HIST) renderCharts(HIST);
+  tickHistory();          // a different range is a different query
 });
 
 function plot(cv, series, opts) {
@@ -418,10 +427,15 @@ function plot(cv, series, opts) {
     g.fillStyle = css('--muted'); g.fillText(v, 6, Y(v) + 3);
   }
 
+  // Minutes stop reading as a duration somewhere around an hour, and "-10080m"
+  // is nobody's idea of a week.
+  const ago = m => m >= 1440 ? `-${+(m / 1440).toFixed(m % 1440 ? 1 : 0)}d`
+                 : m >= 60  ? `-${+(m / 60).toFixed(m % 60 ? 1 : 0)}h`
+                 : `-${Math.round(m)}m`;
   g.fillStyle = css('--muted');
   [0, 0.5, 1].forEach(f => {
     g.textAlign = f === 0 ? 'left' : (f === 1 ? 'right' : 'center');
-    g.fillText(f === 1 ? 'now' : `-${Math.round(opts.spanMin * (1 - f))}m`,
+    g.fillText(f === 1 ? 'now' : ago(opts.spanMin * (1 - f)),
                pad.l + (w - pad.l - pad.r) * f, ht - 6);
   });
   g.textAlign = 'left';
@@ -458,14 +472,8 @@ function legend(el, items) {
 const lastOf = a => { for (let i = a.length - 1; i >= 0; i--) if (a[i] != null) return a[i]; return null; };
 const amps = v => v == null ? '–' : (+v).toFixed(1) + ' A';
 
-function renderCharts(raw) {
-  HIST = raw;
-  const from = Math.max(0, raw.t.length - RANGE_MIN * 60);   // samples are 1 Hz
-  const h = {
-    t: raw.t.slice(from), house: raw.house.slice(from),
-    car: raw.car.slice(from), setpoint: raw.setpoint.slice(from),
-    main_fuse: raw.main_fuse,
-  };
+function renderCharts(h) {
+  HIST = h;
   const n = h.t.length;
   const spanMin = n > 1 ? Math.max(1, Math.round((h.t[n - 1] - h.t[0]) / 60)) : RANGE_MIN;
 
@@ -478,6 +486,8 @@ function renderCharts(raw) {
   legend($('#leg-meter'), [
     ...meter.map(s => ({ label: s.label, color: s.color, value: amps(lastOf(s.values)) })),
     { label: `Fuse ${h.main_fuse} A`, color: css('--bad') },
+    ...(h.resolution === '1m'
+      ? [{ label: 'per-minute peaks', color: 'transparent' }] : []),
   ]);
 
   // --- allowed vs actually drawn ---
@@ -638,7 +648,7 @@ async function tick() {
   }
 }
 async function tickHistory() {
-  try { renderCharts(await api('history')); } catch (e) {}
+  try { renderCharts(await api('history?minutes=' + RANGE_MIN)); } catch (e) {}
 }
 tick(); tickHistory();
 setInterval(tick, 1000);
