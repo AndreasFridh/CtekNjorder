@@ -189,6 +189,11 @@ python -m venv .venv && ./.venv/Scripts/pip install paho-mqtt aiohttp pytest
 Run the add-on outside Home Assistant by pointing `CTEK_OPTIONS` at an options
 JSON file and `CTEK_HASS_WS` at a Home Assistant WebSocket URL.
 
+## Planned
+
+See [todo.md](todo.md) — charge-enable and electricity-price inputs from Home
+Assistant, per-charger network monitoring, and a richer set of charger cards.
+
 ## Known unknowns
 
 Carried from [PROTOCOL.md](PROTOCOL.md); these are not yet answered:
