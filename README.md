@@ -166,6 +166,19 @@ CTEK_OPTIONS=sim-options.json \n  CTEK_HASS_WS=ws://127.0.0.1:18123/api/websocke
 
 The oscillation the settle guard fixes was found this way, not by inspection.
 
+## Branding
+
+`ctek_njord_sim/icon.png` and `logo.png` are generated from a product photo by
+`tools/make_icons.py`. Drop the source at `branding/source.webp` (or `.png`)
+and re-run it; the raw file is gitignored, the derived images are committed.
+
+The cut-out works from the product's silhouette rather than by making light
+pixels transparent — the charger is black with a *white* printed logo, so a
+white-to-alpha pass would erase the branding, and the photo's drop shadow is
+neither black nor white. Both output images sit on a pale rounded plate,
+because a near-black product on transparency is invisible against Home
+Assistant's dark theme.
+
 ## Development
 
 ```bash

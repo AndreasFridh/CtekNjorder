@@ -17,3 +17,7 @@ sim-options.json
 # Real MQTT captures from a live installation - contain device serials and
 # household consumption data. Regenerate your own with tools/sniff.py.
 captures/
+
+# Raw vendor artwork. The derived icon.png / logo.png are committed; this is
+# only needed to regenerate them (tools/make_icons.py).
+branding/source.*
