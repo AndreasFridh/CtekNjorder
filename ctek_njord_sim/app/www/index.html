@@ -116,6 +116,7 @@ canvas{width:100%;height:190px;display:block}
 .chg-big em{font-style:normal;font-size:30px;font-weight:250;line-height:1;
   font-variant-numeric:tabular-nums}
 .chg-big span{font-size:12px;color:var(--muted)}
+.chg-note{margin-top:6px;font-size:12px;color:var(--muted)}
 .chg-sub code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
 .chg-bar{height:7px;background:var(--free);border-radius:4px;margin-top:8px;overflow:hidden}
 .chg-bar i{display:block;height:100%;background:var(--car);transition:width .4s ease}
@@ -382,12 +383,28 @@ function renderChargers(s) {
     return;
   }
   $('#chargers').innerHTML = '<div class="cards">' + list.map(c => {
-    let tag, cls, card = '';
-    if (!c.bound)          { tag = c.ever_seen ? 'offline' : 'never reached';
-                             cls = 'off'; card = ' down'; }
-    else if (c.allocated)  { tag = 'charging'; cls = 'on'; }
-    else if (c.wants)      { tag = 'waiting for capacity'; cls = 'wait'; }
-    else                   { tag = 'no car'; cls = ''; card = ' idle'; }
+    // Say what is actually true. "Waiting for capacity" was shown whenever a
+    // charger had no allocation, including when there was plenty spare and
+    // simply no car plugged in - which reads as a fault when nothing is wrong.
+    let tag, cls, card = '', note = '';
+    const drawing = c.drawn > 0.5;
+    if (!c.bound) {
+      tag = c.ever_seen ? 'offline' : 'never reached';
+      cls = 'off'; card = ' down';
+      note = c.ever_seen ? 'Reconnecting automatically'
+                         : 'No answer from this address';
+    } else if (drawing) {
+      tag = 'charging'; cls = 'on';
+    } else if (c.allocated > 0) {
+      tag = 'ready'; cls = 'on';
+      note = 'Not charging \u00b7 ' + c.allocated + ' A allowed';
+    } else if (c.available > 0) {
+      tag = 'ready'; cls = ''; card = ' idle';
+      note = 'Not connected \u00b7 Available capacity ' + c.available + ' A';
+    } else {
+      tag = 'waiting for capacity'; cls = 'wait'; card = ' idle';
+      note = 'No spare current right now';
+    }
 
     // How much of its allowance the car is taking. A car well under its
     // allowance is the signal 'optimal' acts on, so it earns a place here.
@@ -425,6 +442,7 @@ function renderChargers(s) {
         '<em style="font-size:20px;margin-left:8px">' +
           (c.bound ? c.drawn.toFixed(1) : '\u2013') + '</em><span>A drawn</span>' +
       '</div>' +
+      (note ? '<div class="chg-note">' + note + '</div>' : '') +
       '<div class="chg-bar"><i style="width:' + pct + '%"></i></div>' +
       '<div class="chg-sub">' + rows.join('') + '</div>' +
       '<div class="chg-foot"><span>' + sparkline(c.link) + link + '</span>' +
