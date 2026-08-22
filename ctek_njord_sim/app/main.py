@@ -119,7 +119,9 @@ class Service:
         self.allocation: dict[str, int] = {c.id: 0 for c in self.clients}
         self.last_demands: dict = {}
         self._alloc_changed_at: dict[str, float] = {}
+        self._alloc_stopped_at: dict[str, float] = {}
         self.alloc_reason = "starting up"
+        self.over_fuse = 0.0
         self.permitted = True
         self.last_decision = None
         self.last_house: list[float] | None = None
@@ -254,15 +256,38 @@ class Service:
                 [max(0.0, current[p] - total_car[p]) for p in range(3)]
                 if current else None
             )
-            # A car that has not yet reached its allowance is still moving, and
-            # the meter has not caught up with it. Any baseline derived right
-            # now is wrong, so it is not recorded.
-            slewing = any(
-                abs((max(states[c.id]["current"]) if states[c.id]["current"] else 0.0)
-                    - self.allocation.get(c.id, 0)) > 1.5
-                for c in bound if self.allocation.get(c.id, 0) > 0
+            # The baseline is a subtraction between two things measured at
+            # different moments, so it is only meaningful once both have
+            # settled. Two ways it can be untrustworthy:
+            #
+            # 1. A car is still moving toward its allowance. Note that this
+            #    includes a car winding DOWN to zero - which was previously
+            #    skipped, because the check ignored chargers allocated 0. That
+            #    is the worst case there is: the meter still holds the old high
+            #    draw while the charger reports almost none, so the subtraction
+            #    credits the car's current to the house, the headroom collapses,
+            #    and the max-hold filter latches that for its whole window. The
+            #    car stops, the meter catches up, charging restarts, and round
+            #    it goes - which is exactly what a start/stop cycle looks like.
+            #
+            # 2. Everything has settled, but the meter reading in hand was
+            #    taken before it did. A P1 meter reports every ten seconds or
+            #    so, and a reading from before the last change describes a
+            #    world that no longer exists.
+            drawn_now = {
+                c.id: (max(states[c.id]["current"]) if states[c.id]["current"] else 0.0)
+                for c in bound
+            }
+            moving = any(
+                abs(drawn_now[c.id] - self.allocation.get(c.id, 0)) > 1.5
+                for c in bound
             )
-            baseline = self.baseline_filter.update(wall, raw_baseline, trust=not slewing)
+            settled_for = min(
+                (now - self._alloc_changed_at.get(c.id, -1e9) for c in bound),
+                default=1e9,
+            )
+            trust = not moving and settled_for >= opts.meter_lag
+            baseline = self.baseline_filter.update(wall, raw_baseline, trust=trust)
 
             decision = self.balancer.compute(
                 now=now,
@@ -299,18 +324,37 @@ class Service:
             # balancing still applies underneath it - "enabled" never means
             # "unlimited".
             permitted = self.charging_permitted()
+            cap = float(decision.setpoint)
+
+            # Backstop straight off the meter, with no subtraction in it and so
+            # nothing for the alignment to get wrong. If the reading itself is
+            # over the limit we are over the limit now, whatever the derived
+            # baseline believes, and the shortfall comes off what is allowed.
+            self.over_fuse = 0.0
+            if current:
+                over = max(current) - (opts.main_fuse - opts.safety_margin)
+                if over > 0:
+                    self.over_fuse = round(over, 1)
+                    cap = max(0.0, min(cap, sum(self.allocation.values()) - over))
+
             allocation = allocate(
                 decision.headroom or [0.0, 0.0, 0.0],
                 demands,
                 strategy=opts.allocation_strategy,
-                total_cap=0.0 if not permitted else float(decision.setpoint),
+                total_cap=0.0 if not permitted else cap,
             )
+            if self.over_fuse and permitted:
+                allocation.reason = (
+                    f"meter is {self.over_fuse}A over the limit - shedding now"
+                )
             if not permitted:
                 allocation.reason = "charging disabled from Home Assistant"
             self.permitted = permitted
             settled = apply_dwell(
                 now, allocation.per_charger, self.allocation,
                 self._alloc_changed_at, ALLOC_DWELL,
+                restart_hold=opts.restart_hold,
+                stopped_at=self._alloc_stopped_at,
             )
             changed = settled != self.allocation
             self.allocation = settled
