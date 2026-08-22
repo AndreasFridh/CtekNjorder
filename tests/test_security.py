@@ -124,3 +124,41 @@ def test_unknown_option_keys_are_refused():
 def test_numeric_options_cannot_smuggle_a_string_through():
     with pytest.raises(ValueError):
         coerce("main_fuse", "twenty-five")
+
+
+# ---------- a reconnect has to re-subscribe ----------
+
+def test_binding_twice_resubscribes():
+    """
+    We connect with a clean session, so the broker forgets our subscriptions
+    the instant the link drops. A reconnect that skipped re-subscribing left
+    the charger permanently silent while still looking bound - and still
+    holding an allocation it could no longer justify.
+    """
+    class Recorder:
+        def __init__(self):
+            self.subscribed = []
+
+        def subscribe(self, topic, qos=0):
+            self.subscribed.append(topic)
+
+        def publish(self, *a, **kw):
+            pass
+
+    c = client()
+    c._c = Recorder()
+
+    c._bind("40353I37W4008218")
+    first = len(c._c.subscribed)
+    assert first > 0
+
+    c._announced = False          # as a real disconnect resets it
+    c._bind("40353I37W4008218")   # the reconnect
+    assert len(c._c.subscribed) == first * 2, "reconnect did not re-subscribe"
+
+
+def test_a_second_charger_cannot_hijack_a_bound_client():
+    c = client()
+    c._bind("40353I37W4008218")
+    c._bind("40353I37W4009999")
+    assert c.topics.charger == "40353I37W4008218"

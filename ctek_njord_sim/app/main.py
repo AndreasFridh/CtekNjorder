@@ -179,7 +179,14 @@ class Service:
             now = asyncio.get_running_loop().time()
             wall = time.time()
 
-            bound = [c for c in self.clients if c.topics is not None]
+            # Only chargers we can actually talk to take part. A charger that
+            # is switched off, unplugged or simply not owned must not hold an
+            # allocation - that current belongs to the cars that are here.
+            # Being bound is not enough; the link has to be up right now.
+            bound = [
+                c for c in self.clients
+                if c.topics is not None and c.connected.is_set()
+            ]
             if not bound:
                 continue
 
@@ -323,7 +330,8 @@ class Service:
                 "host": client.host,
                 "serial": client.charger_serial,
                 "connected": client.connected.is_set(),
-                "bound": client.topics is not None,
+                "bound": client.topics is not None and client.connected.is_set(),
+                "ever_seen": client.topics is not None,
                 "state": st["state"],
                 "current": st["current"],
                 "drawn": round(drawn, 1),
@@ -430,6 +438,19 @@ class Service:
 
     # ---------- lifecycle ----------
 
+    async def reconnect_loop(self) -> None:
+        """Keep trying anything that is not answering."""
+        while True:
+            await asyncio.sleep(5)
+            down = [c for c in self.clients if not c.connected.is_set()]
+            if down:
+                # reconnect() blocks on the TCP attempt, and an unreachable
+                # host blocks for the OS timeout - so never on the event loop.
+                await asyncio.gather(
+                    *(asyncio.to_thread(c.ensure_connected) for c in down),
+                    return_exceptions=True,
+                )
+
     async def run(self) -> None:
         for client in self.clients:
             client.start()
@@ -437,6 +458,7 @@ class Service:
         tasks = [
             asyncio.create_task(self.hass.run()),
             asyncio.create_task(self.control_loop()),
+            asyncio.create_task(self.reconnect_loop()),
         ]
         try:
             await asyncio.gather(*tasks)

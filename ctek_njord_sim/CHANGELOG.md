@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.9.2
+
+- **Fixed: a charger never recovered from losing its connection.** We connect
+  with a clean session, so the broker forgets our subscriptions when the link
+  drops - and the reconnect path skipped re-subscribing. The charger stayed
+  silent afterwards while still counting as connected and still holding an
+  allocation.
+- **Only chargers that answer take part.** One that is switched off, unplugged,
+  or simply does not exist is left out of the split entirely, and its current
+  goes to the cars that are actually there.
+- Anything not answering is retried every 15 seconds, so a charger that comes
+  back - or is switched on for the first time - joins on its own.
+- An unreachable charger is no longer reported as a failure. "Never reached"
+  and "went offline" are shown differently, because the first usually means an
+  address for a charger you do not have.
+- Empty rows in the charger list no longer appear ticked. Showing them enabled
+  made it look like six chargers were configured, and unticking one appeared to
+  do nothing because a row with no address is ignored anyway.
+- An offline charger shows "draw unknown" rather than its last reading.
+
 ## 0.9.1
 
 - No functional change. Records the project's release habit: every change gets
