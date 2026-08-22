@@ -50,6 +50,13 @@ class World:
         self.gate = "on"
         self.price = 2.45
         self.steady = False
+        # A real P1 meter reports every ten seconds or so, so what it says now
+        # describes the house as it was up to that long ago. Pushing the live
+        # value every two seconds - as this mock did - is far kinder than any
+        # real meter, and hides every bug that lag causes.
+        self.lag = 0.0
+        self.interval = 2.0
+        self._history: list[tuple[float, list[float]]] = []
         self.start = time.time()
         self._label = None
 
@@ -70,7 +77,7 @@ class World:
                 return amps
         return 4.0
 
-    def house(self) -> list[float]:
+    def _live(self) -> list[float]:
         b = self.baseline()
         vals = [b + c for c in self.car]
         if self.steady:
@@ -78,6 +85,18 @@ class World:
             # time and Home Assistant stops sending events entirely.
             return [float(round(v)) for v in vals]
         return [round(v, 1) for v in vals]
+
+    def house(self) -> list[float]:
+        """What the meter reports, which is the house as it was `lag` ago."""
+        now = time.time()
+        live = self._live()
+        if self.lag <= 0:
+            return live
+        self._history.append((now, live))
+        cutoff = now - self.lag
+        while len(self._history) > 1 and self._history[1][0] <= cutoff:
+            self._history.pop(0)
+        return list(self._history[0][1])
 
 
 def start_mqtt(world: World, host: str, port: int) -> None:
@@ -190,6 +209,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=18123)
     ap.add_argument("--mqtt-host", default="127.0.0.1")
+    ap.add_argument("--meter-lag", type=float, default=0.0,
+                    help="seconds the meter trails reality, as a real P1 does")
     ap.add_argument("--steady", action="store_true",
                     help="report whole amps, so a settled house stops changing "
                          "and Home Assistant sends no events at all")
@@ -202,6 +223,7 @@ def main():
 
     world = World()
     world.steady = args.steady
+    world.lag = args.meter_lag
     for port in str(args.mqtt_port).split(","):
         start_mqtt(world, args.mqtt_host, int(port.strip()))
     log.info("fake Home Assistant on ws://127.0.0.1:%s/api/websocket", args.port)

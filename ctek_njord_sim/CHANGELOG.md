@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.12.0
+
+**Update if charging has been starting and stopping repeatedly.** Cars fault
+after several quick stop-start cycles and then refuse to charge until they are
+unplugged and plugged back in.
+
+- **Fixed the cause.** The guard that stops the house baseline being re-derived
+  while a car is mid-ramp skipped any charger allocated 0 A - which is the
+  worst case there is. Winding a car down to zero leaves the meter holding its
+  old draw while the charger reports almost none, so the subtraction credits
+  the car's current to the house, the headroom collapses, and the filter holds
+  that for its whole window. The car stops, the meter catches up, charging
+  restarts, and round it goes.
+- **New `meter_lag` setting (default 12 s).** A P1 meter reports every ten
+  seconds or so, so a reading taken before the last change describes a world
+  that no longer exists. The baseline is no longer re-derived until this long
+  after a change. Raise it if cycling persists.
+- **New `restart_hold` setting (default 90 s).** Pausing a car stays immediate,
+  because that is what protects the fuse. Restarting now waits, because that is
+  what protects the car. The two directions are no longer treated alike.
+- **A backstop straight off the meter.** If the reading itself exceeds the
+  limit, current is shed at once - no subtraction involved, so nothing for the
+  timing to get wrong.
+
 ## 0.11.1
 
 - No functional change. Cut the README from 239 lines to 90: setup, options and

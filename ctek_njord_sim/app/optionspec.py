@@ -122,6 +122,19 @@ SPECS: tuple[Spec, ...] = (
     Spec("meter_interval", "Meter interval", "float", "Behaviour",
          min=1, max=60, step=1, unit="s", advanced=True,
          help="How often meter data is mirrored to the charger."),
+    Spec("restart_hold", "Restart hold", "int", "Behaviour",
+         min=0, max=600, unit="s",
+         help="After pausing a car, wait this long before starting it again. "
+              "Pausing stays immediate. Many cars fault and refuse to charge "
+              "after several quick stop-start cycles, so restarts are made "
+              "deliberately slow."),
+    Spec("meter_lag", "Meter lag", "float", "Behaviour",
+         min=0, max=60, step=1, unit="s", advanced=True,
+         help="How long your meter takes to reflect a change. A P1 meter "
+              "reports every ten seconds or so, and a reading taken before the "
+              "last change describes a world that no longer exists - so the "
+              "house baseline is not re-derived until this long after one. "
+              "Raise it if charging starts and stops repeatedly."),
     Spec("ping_interval", "Link check interval", "int", "Behaviour",
          min=5, max=600, unit="s", advanced=True,
          help="How often to measure the connection to each charger. A TCP "

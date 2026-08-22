@@ -230,26 +230,53 @@ def apply_dwell(
     previous: dict[str, int],
     changed_at: dict[str, float],
     dwell: float,
+    restart_hold: float = 90.0,
+    stopped_at: dict[str, float] | None = None,
 ) -> dict[str, int]:
     """
-    Hold a charger steady briefly before nudging it by a single amp.
+    Hold a charger steady before changing it again.
 
     Every change makes a car ramp, and while it ramps the meter reading and the
     reported draw describe different instants - so the inferred baseline moves,
     the headroom moves, and the split comes out slightly different. With two
     cars that feedback sustains itself and the setpoints never stop twitching.
 
-    So a one-amp adjustment, in either direction, has to wait out the dwell.
-    One amp is roughly 0.2 kW and nothing is at risk in the meantime, whereas
-    a car whose allowance jitters every few seconds is a genuine annoyance.
+    A one-amp adjustment therefore waits out `dwell`. One amp is roughly 0.2 kW
+    and nothing is at risk meanwhile, whereas an allowance that jitters every
+    few seconds is a genuine annoyance.
 
-    Anything that actually matters is exempt: a drop of two amps or more, a
-    pause to zero, and a charger starting up from zero all apply immediately.
+    **Stopping is always immediate. Restarting never is.** That asymmetry is the
+    important part. Cars do not treat a charging session as free: several
+    stop-start cycles in quick succession and many will fault and refuse to
+    charge until they are unplugged and plugged back in. So pausing stays
+    instant, because that is the direction that protects the fuse, but coming
+    back off zero waits `restart_hold` - long enough for a slow meter to have
+    caught up, so the restart is made on real information rather than on the
+    tail of the last change.
     """
     out: dict[str, int] = {}
+    stopped_at = stopped_at if stopped_at is not None else {}
+
     for cid, want in proposed.items():
         prev = previous.get(cid, 0)
-        urgent = want == 0 or prev == 0 or want <= prev - 2
+
+        if want <= 0:
+            if prev > 0:
+                stopped_at[cid] = now
+                changed_at[cid] = now
+            out[cid] = 0
+            continue
+
+        if prev <= 0:
+            waited = now - stopped_at.get(cid, -1e9)
+            if waited < restart_hold:
+                out[cid] = 0          # still settling after the last stop
+                continue
+            changed_at[cid] = now
+            out[cid] = want
+            continue
+
+        urgent = want <= prev - 2
         if not urgent and want != prev and (now - changed_at.get(cid, -1e9)) < dwell:
             want = prev
         if want != prev:

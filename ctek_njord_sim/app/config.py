@@ -51,6 +51,8 @@ class Options:
     raise_delay: int = 30
     settle_window: float = 10.0
     settle_tolerance: float = 1.5
+    restart_hold: int = 90
+    meter_lag: float = 12.0
     ping_interval: int = 30
     control_interval: float = 15.0
     meter_interval: float = 10.0

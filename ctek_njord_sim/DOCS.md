@@ -284,6 +284,14 @@ entity IDs are wrong, or they report non-numeric states such as `unavailable`.
 It reached the broker but saw no retained configuration topic. Confirm the IP,
 and that the charger is powered and on the same network.
 
+**Charging keeps starting and stopping**
+Raise **Meter lag** to match how often your meter really reports - ten seconds
+or more for a P1. The house baseline is worked out by subtracting the car from
+the meter reading, and if the meter has not caught up with the last change that
+subtraction credits the car's own current to the house. **Restart hold** also
+sets a floor on how often a car can be started again after a pause; cars fault
+after several quick cycles.
+
 **The setpoint flaps between values**
 Increase `settle_window` if your car ramps slowly, or `raise_delay` if the
 household load itself is swinging.

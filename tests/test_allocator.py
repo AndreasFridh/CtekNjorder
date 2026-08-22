@@ -548,3 +548,53 @@ def test_state_two_still_counts_before_an_offer_has_been_ignored():
     t = DemandTracker()
     t.update(0.0, "d", setpoint=16, drawn=0.0)
     assert t.wants_current(5.0, "d", state=2, drawn=0.0)
+
+
+# ---------- protecting the car from repeated stop-start ----------
+
+def test_stopping_is_immediate_but_restarting_waits():
+    """
+    Many cars fault and refuse to charge after several quick stop-start
+    cycles, so the two directions cannot be treated alike. Pausing protects
+    the fuse and must never wait; restarting protects the car and must.
+    """
+    from app.allocator import apply_dwell
+    changed, stopped = {}, {}
+
+    out = apply_dwell(100.0, {"a": 0}, {"a": 16}, changed, 20.0,
+                      restart_hold=90.0, stopped_at=stopped)
+    assert out["a"] == 0, "pausing must be instant"
+
+    out = apply_dwell(110.0, {"a": 16}, {"a": 0}, changed, 20.0,
+                      restart_hold=90.0, stopped_at=stopped)
+    assert out["a"] == 0, "restarting ten seconds later would cycle the car"
+
+    out = apply_dwell(100.0 + 95, {"a": 16}, {"a": 0}, changed, 20.0,
+                      restart_hold=90.0, stopped_at=stopped)
+    assert out["a"] == 16, "but it does start again once the hold has passed"
+
+
+def test_a_car_cannot_be_cycled_repeatedly():
+    """The failure that reached real hardware: stop, start, stop, start."""
+    from app.allocator import apply_dwell
+    changed, stopped = {}, {}
+    state = {"a": 16}
+    starts = 0
+
+    # Headroom flapping every few seconds, as a lagging meter makes it do.
+    for i in range(60):
+        now = 100.0 + i * 5
+        want = 16 if i % 2 else 0
+        state = apply_dwell(now, {"a": want}, state, changed, 20.0,
+                            restart_hold=90.0, stopped_at=stopped)
+        if state["a"] > 0 and want == 16:
+            starts += 1
+
+    assert starts <= 4, f"the car was started {starts} times in five minutes"
+
+
+def test_the_hold_does_not_delay_a_charger_that_never_stopped():
+    from app.allocator import apply_dwell
+    out = apply_dwell(100.0, {"a": 10}, {"a": 8}, {"a": 0.0}, 20.0,
+                      restart_hold=90.0, stopped_at={})
+    assert out["a"] == 10
