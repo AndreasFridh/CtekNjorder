@@ -42,6 +42,7 @@ class Options:
     meter_interval: float = 10.0
 
     dry_run: bool = True
+    restrict_api: bool = True
     log_level: str = "info"
 
     @classmethod
