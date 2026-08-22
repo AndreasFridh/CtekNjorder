@@ -293,11 +293,21 @@ function renderBanners(s) {
     out += banner('bad', `<b>Configuration problem.</b>&nbsp;${esc(s.error)} Fix it under Settings.`);
   if (s.dry_run)
     out += banner('warn', '<b>Dry run.</b>&nbsp;Decisions are logged but nothing is sent to the charger. Turn this off under Settings once you are happy — and block the Nanogrid Air first, or the two will fight.');
-  const bad = (s.chargers || []).filter(c => !c.bound);
-  if (bad.length)
-    out += banner(s.connected.chargers_bound ? 'warn' : 'bad',
-      `<b>${bad.length} of ${s.connected.chargers_total} chargers not reachable.</b>&nbsp;` +
-      bad.map(c => esc(c.name)).join(', ') + '. Check the addresses under Settings.');
+  // Distinguish "never answered" - most likely an address for a charger that
+  // is not there - from "was working and has dropped off", which is the one
+  // worth reacting to.
+  const never = (s.chargers || []).filter(c => !c.bound && !c.ever_seen);
+  const lost = (s.chargers || []).filter(c => !c.bound && c.ever_seen);
+  if (lost.length)
+    out += banner('warn',
+      `<b>${lost.map(c => esc(c.name)).join(', ')} went offline.</b>&nbsp;` +
+      'Treated as unplugged; its current has gone to the other chargers. ' +
+      'Reconnecting automatically.');
+  if (never.length)
+    out += banner('warn',
+      `<b>Never reached ${never.map(c => esc(c.name)).join(', ')}.</b>&nbsp;` +
+      'Ignored for now. Remove the address under Settings if that charger ' +
+      'does not exist.');
   if (!s.connected.hass)
     out += banner('bad', '<b>Not connected to Home Assistant.</b>&nbsp;No live meter readings.');
   $('#banners').innerHTML = out;
@@ -341,7 +351,7 @@ function renderChargers(s) {
   }
   $('#chargers').innerHTML = list.map(c => {
     let tag, cls;
-    if (!c.bound)          { tag = c.connected ? 'connecting' : 'offline'; cls = 'off'; }
+    if (!c.bound)          { tag = c.ever_seen ? 'offline' : 'never reached'; cls = 'off'; }
     else if (c.allocated)  { tag = 'charging'; cls = 'on'; }
     else if (c.wants)      { tag = 'waiting for capacity'; cls = 'wait'; }
     else                   { tag = 'no car'; cls = ''; }
@@ -365,7 +375,8 @@ function renderChargers(s) {
         <span class="chg-name">${esc(c.name)}</span>
         <span class="chg-tag ${cls}">${tag}</span>
         <span class="chg-num">${c.allocated}<small> A allowed</small>
-          &nbsp;&middot;&nbsp;${c.drawn.toFixed(1)}<small> A drawn</small></span>
+          &nbsp;&middot;&nbsp;${c.bound ? c.drawn.toFixed(1) + '<small> A drawn</small>'
+            : '<small>draw unknown</small>'}</span>
       </div>
       <div class="chg-bar"><i style="width:${pct}%"></i></div>
       <div class="chg-sub">${sub.join('<span></span>')}</div>
@@ -592,14 +603,20 @@ function field(sp) {
     return `<div class="crow" style="color:var(--muted);font-size:11px;
               text-transform:uppercase;letter-spacing:.04em">
               <span>Name</span><span>Address</span><span>Port</span><span></span></div>` +
-      rows.map((r, i) => `<div class="crow" data-crow="${i}">
+      rows.map((r, i) => {
+        // An empty row is not a charger, so it must not show as a ticked one.
+        // Rendering blanks as enabled made it look like six chargers were
+        // configured, and unticking them appeared to do nothing because a row
+        // with no address is dropped anyway.
+        const has = !!r.host;
+        return `<div class="crow" data-crow="${i}">
         <input type="text" class="cname" placeholder="Charger ${i + 1}" value="${esc(r.name)}">
-        <input type="text" class="chost" placeholder="192.168.1.50" value="${esc(r.host)}">
+        <input type="text" class="chost" placeholder="empty = unused" value="${esc(r.host)}">
         <input type="number" class="cport" min="1" max="65535" value="${esc(r.port || 1883)}">
         <label class="cen"><input type="checkbox" class="cenabled"
-          ${r.enabled === false ? '' : 'checked'}> on</label>
+          ${has && r.enabled !== false ? 'checked' : ''} ${has ? '' : 'disabled'}> on</label>
         <input type="hidden" class="cserial" value="${esc(r.serial)}">
-      </div>`).join('');
+      </div>`; }).join('');
   }
   if (sp.type === 'bool')
     return `<input type="checkbox" id="f_${sp.key}" data-key="${sp.key}" ${v ? 'checked' : ''}>`;
@@ -646,6 +663,18 @@ function renderForm() {
     '</datalist>').join('');
   $('#form').innerHTML = out;
   $('#form').addEventListener('input', () => setDirty(true), { once: true });
+  $('#form').addEventListener('input', e => {
+    if (!e.target.classList.contains('chost')) return;
+    const row = e.target.closest('[data-crow]');
+    const box = row.querySelector('.cenabled');
+    const has = !!e.target.value.trim();
+    box.disabled = !has;
+    if (has && !box.dataset.touched) box.checked = true;
+    if (!has) box.checked = false;
+  });
+  $('#form').addEventListener('change', e => {
+    if (e.target.classList.contains('cenabled')) e.target.dataset.touched = '1';
+  });
 }
 
 async function loadSettings() {

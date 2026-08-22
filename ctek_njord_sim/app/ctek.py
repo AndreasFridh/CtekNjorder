@@ -86,6 +86,9 @@ class ChargerState:
 
 
 class CtekClient:
+    # How often to retry a charger that is not answering.
+    RECONNECT_INTERVAL = 15.0
+
     def __init__(
         self,
         host: str,
@@ -114,6 +117,7 @@ class CtekClient:
         self.connected = threading.Event()
         self.topics: Topics | None = None
         self._announced = False
+        self._last_reconnect = 0.0
 
         cid = f"ctek-ha-sim-{uuid.uuid4().hex[:8]}"
         self._c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=cid,
@@ -143,11 +147,16 @@ class CtekClient:
         if rc != 0:
             _LOG.error("[%s] charger refused MQTT connection: %s", self.name, rc)
             return
+        was_down = not self.connected.is_set()
         self.connected.set()
+        self._announced = False
+        if was_down and self.topics is not None:
+            _LOG.info("[%s] reconnected", self.name)
         if self.charger_serial:
             self._bind(self.charger_serial)
         else:
-            _LOG.info("No charger_serial configured; discovering from retained topics")
+            _LOG.info("[%s] no serial configured; discovering from retained topics",
+                      self.name)
             client.subscribe(DISCOVERY_TOPIC, qos=0)
 
     def _on_disconnect(self, client, userdata, flags, rc, properties=None):
@@ -156,19 +165,51 @@ class CtekClient:
         _LOG.warning("[%s] disconnected from charger broker (%s)", self.name, rc)
 
     def _bind(self, serial: str) -> None:
-        """Lock onto a charger serial and subscribe to its topics."""
+        """
+        Lock onto a charger serial, and (re)subscribe to its topics.
+
+        The subscribing happens on EVERY connect, not just the first. We
+        connect with a clean session, so the broker forgets our subscriptions
+        the moment the link drops - and a reconnect that skipped this left the
+        charger permanently silent while still looking bound and still holding
+        an allocation. Being bound is not the same as being subscribed.
+        """
         if not SERIAL_RE.match(serial or ""):
             _LOG.warning("[%s] ignoring implausible charger serial from the broker: %r",
                          self.name, serial)
             return
-        if self.topics and self.topics.charger == serial:
+        if self.topics is not None and self.topics.charger != serial:
+            _LOG.warning("[%s] already serving %s, ignoring %s",
+                         self.name, self.topics.charger, serial)
             return
-        self.charger_serial = serial
-        self.topics = Topics(charger=serial, adapter=self.adapter_serial)
-        _LOG.info("[%s] bound to charger %s", self.name, serial)
+
+        if self.topics is None:
+            self.charger_serial = serial
+            self.topics = Topics(charger=serial, adapter=self.adapter_serial)
+            _LOG.info("[%s] bound to charger %s", self.name, serial)
+
         for t in self.topics.subscriptions():
             self._c.subscribe(t, qos=0)
         self.announce()
+
+    def ensure_connected(self) -> None:
+        """
+        Nudge a dropped connection back up. Blocking - call it off the loop.
+
+        paho retries on its own, but a charger that is simply switched off is
+        the expected case here rather than an error, so the retry is made
+        explicit and logged at a sane interval instead of being assumed.
+        """
+        if self.connected.is_set():
+            return
+        now = time.time()
+        if now - self._last_reconnect < self.RECONNECT_INTERVAL:
+            return
+        self._last_reconnect = now
+        try:
+            self._c.reconnect()
+        except Exception as e:
+            _LOG.debug("[%s] still unreachable (%s)", self.name, e)
 
     # ---------- inbound ----------
 

@@ -42,7 +42,17 @@ Everything is configurable from the UI; you never need the Configuration tab.
 
 Add up to six, each with its own address - each charger hosts its own MQTT
 broker, so there is nothing shared to point at. Leave a row's address blank to
-ignore it.
+ignore it; blank rows are not chargers and their toggle stays greyed out.
+
+Only chargers that actually answer take part. One that is switched off,
+unplugged, or that you simply do not own is left out of the split entirely, and
+its share goes to the cars that are there. Anything not answering is retried
+every 15 seconds, so a charger that comes back - or is switched on for the
+first time - joins on its own without restarting the add-on.
+
+A charger that has never answered is reported separately from one that was
+working and dropped off, because the first usually just means an address for a
+charger that does not exist.
 
 The meter sees every car at once, so the house baseline is the reading minus
 all of them, and whatever headroom remains is divided.
