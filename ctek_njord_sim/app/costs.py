@@ -78,11 +78,46 @@ class Session:
     energy_wh: float = 0.0
     cost: float = 0.0
     ended: float | None = None
+    peak_current: float = 0.0
+    charging_s: float = 0.0        # time actually drawing, which is not the
+                                   # same as elapsed once load balancing pauses
+                                   # a car through a household peak
+    min_price: float | None = None
+    max_price: float | None = None
     _counter: int | None = field(default=None, repr=False)
+    _last_seen: float | None = field(default=None, repr=False)
 
     @property
     def duration(self) -> float:
         return (self.ended or time.time()) - self.started
+
+    @property
+    def avg_current(self) -> float:
+        """Averaged over time spent charging, not over the whole session."""
+        if self.charging_s <= 0:
+            return 0.0
+        # Energy in Wh over hours charging gives watts; three phases at ~230 V.
+        watts = self.energy_wh / (self.charging_s / 3600.0)
+        return watts / (3 * 230.0)
+
+    def as_record(self, charger_id: str, name: str, currency: str) -> dict:
+        energy_kwh = self.energy_wh / 1000.0
+        return {
+            "charger": charger_id,
+            "name": name,
+            "started": round(self.started, 1),
+            "ended": round(self.ended or time.time(), 1),
+            "duration_s": round(self.duration),
+            "charging_s": round(self.charging_s),
+            "energy_kwh": round(energy_kwh, 3),
+            "cost": round(self.cost, 3),
+            "currency": currency,
+            "peak_current": round(self.peak_current, 1),
+            "avg_current": round(self.avg_current, 1),
+            "avg_price": round(self.cost / energy_kwh, 3) if energy_kwh > 0.001 else None,
+            "min_price": self.min_price,
+            "max_price": self.max_price,
+        }
 
 
 class CostTracker:
@@ -92,10 +127,13 @@ class CostTracker:
     IDLE_GRACE = 120.0     # seconds below that before the session is closed
     KEEP_SESSIONS = 20     # completed sessions retained per charger
 
-    def __init__(self):
+    def __init__(self, on_complete=None):
         self.active: dict[str, Session] = {}
         self.completed: dict[str, list[Session]] = {}
         self._drawing_since: dict[str, float] = {}
+        # Called with (charger_id, Session) when a session ends, so storage is
+        # somebody else's problem.
+        self._on_complete = on_complete
 
     def update(self, now: float, cid: str, drawn: float,
                energy_counter: int | None, price: float | None) -> None:
@@ -106,9 +144,25 @@ class CostTracker:
         session = self.active.get(cid)
 
         if drawing and session is None:
-            session = Session(started=now, _counter=energy_counter)
+            session = Session(started=now, _counter=energy_counter, _last_seen=now)
             self.active[cid] = session
             _LOG.info("[%s] charging session started", cid)
+
+        if session is not None:
+            # Elapsed time is not charging time: load balancing pauses a car
+            # through a household peak, and a session that ran four hours but
+            # charged for one should say so.
+            if session._last_seen is not None:
+                elapsed = max(0.0, now - session._last_seen)
+                if drawing:
+                    session.charging_s += elapsed
+            session._last_seen = now
+            session.peak_current = max(session.peak_current, drawn)
+            if price is not None:
+                session.min_price = (price if session.min_price is None
+                                     else min(session.min_price, price))
+                session.max_price = (price if session.max_price is None
+                                     else max(session.max_price, price))
 
         if session is not None and energy_counter is not None:
             if session._counter is None:
@@ -134,6 +188,12 @@ class CostTracker:
                 _LOG.info("[%s] session ended: %.2f kWh, cost %.2f, %.0f min",
                           cid, session.energy_wh / 1000, session.cost,
                           session.duration / 60)
+                if self._on_complete is not None:
+                    try:
+                        self._on_complete(cid, session)
+                    except Exception as e:
+                        # Recording history must never disturb charging.
+                        _LOG.warning("Could not record the session: %s", e)
 
     def cost_per_hour(self, power_w: int | None, price: float | None) -> float | None:
         """What this charger is costing right now, per hour, at the current price."""

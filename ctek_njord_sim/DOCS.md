@@ -1,4 +1,4 @@
-# CTEK Njord Load Balancer
+# CtekNjorder
 
 Replaces the CTEK Nanogrid Air. The add-on connects to the charger's own MQTT
 broker, impersonates the adapter, and commands a charging current based on
@@ -169,6 +169,24 @@ final price would be wrong for every session that spans a change.
 
 Energy comes from the charger's own lifetime meter, so it is the charger's
 measurement rather than an estimate.
+
+## Charging sessions
+
+The **Sessions** tab lists every completed charging session and keeps them
+across restarts: which charger, the day, start and end times, how long it ran,
+how long it actually charged, energy, cost, the average price paid, and the
+peak current drawn.
+
+Elapsed time and charging time are listed separately on purpose. Load balancing
+pauses a car through a household peak, so a session can run for hours while
+charging for far less, and a single "duration" would hide that.
+
+Totals are shown for the last 7 days, the last 30, and all time. The average
+price is cost divided by energy rather than a mean of prices, which is what
+tells you whether charging at cheap hours is actually working.
+
+Costs only appear if an electricity price entity is configured; energy and
+timings are recorded either way.
 
 ## Link quality
 

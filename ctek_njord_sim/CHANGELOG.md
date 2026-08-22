@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.11.0
+
+- **Charging session log.** Every completed session is recorded and kept across
+  restarts: charger, day, start and end time, how long it ran, how long it
+  actually charged, energy, cost, average price paid, and peak current.
+- **A Sessions tab** to browse them, with totals for 7 days, 30 days and all
+  time, and a filter per charger.
+- Elapsed time and charging time are shown separately, because load balancing
+  pauses a car through a household peak - a session that ran ten minutes and
+  charged for eight should say so rather than claim ten.
+- Average price is cost divided by energy, not a mean of prices: a short
+  expensive session and a long cheap one do not average to the middle.
+- **Renamed to CtekNjorder** throughout the add-on and its documentation. The
+  charger keeps its own name - it is still a CTEK Njord GO.
+
 ## 0.10.2
 
 - **Fixed "waiting for capacity" with capacity plainly available.** A charger

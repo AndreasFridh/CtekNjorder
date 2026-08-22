@@ -1,5 +1,5 @@
 """
-CTEK Njord Load Balancer
+CtekNjorder
 Copyright (C) 2026 Andreas Fridh
 
 This program is free software: you can redistribute it and/or modify it under
@@ -46,6 +46,7 @@ from .netmon import LinkMonitor
 from .history import History
 from .optionspec import LIVE_KEYS
 from .protocol import PHASE_ROTATIONS
+from .sessions import SessionLog
 from .web import WebUI
 
 _LOG = logging.getLogger("ctek")
@@ -108,7 +109,8 @@ class Service:
             )
         )
         self.demand = DemandTracker()
-        self.costs = CostTracker()
+        self.session_log = SessionLog()
+        self.costs = CostTracker(on_complete=self._record_session)
         self.links = LinkMonitor()
         self.baseline_filter = BaselineFilter()
         self.web = WebUI(self)
@@ -125,6 +127,11 @@ class Service:
         self._last_control = 0.0
         self._last_meter = 0.0
         self._last_status = 0.0
+
+    def _record_session(self, cid: str, session) -> None:
+        """Hand a finished session to the log, named as the user named it."""
+        name = next((c.name for c in self.clients if c.id == cid), cid)
+        self.session_log.add(session.as_record(cid, name, self.opts.currency))
 
     # ---------- measurement plumbing ----------
 
