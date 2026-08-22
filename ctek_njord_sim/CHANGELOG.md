@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.1
+
+- No functional change. Records the project's release habit: every change gets
+  a version bump, a changelog entry, and a push to `main` — including
+  documentation-only changes, so the add-on's version always moves when
+  anything in the repository does.
+
 ## 0.9.0
 
 **Up to six chargers.** The Nanogrid Air controls exactly one; this is the
