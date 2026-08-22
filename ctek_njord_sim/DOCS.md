@@ -28,6 +28,11 @@ Everything is configurable from the UI; you never need the Configuration tab.
   per-phase bar showing house load and car draw against your fuse; a chart of
   the meter's three phases; a chart of allowed versus actually drawn current;
   and charger state.
+
+  Charts cover 5 minutes to 7 days and are kept across restarts in `/data`
+  (about 500 KB for the full week). The last 30 minutes are held at one sample
+  per second; anything longer is shown as per-minute peaks, so a brief spike
+  still appears rather than being averaged out.
 - **Settings** — every option, grouped, with an entity picker that lists your
   own sensors. Limits and behaviour take effect immediately, so you can tune
   the fuse or the margin while a car is charging. Connection and entity changes
