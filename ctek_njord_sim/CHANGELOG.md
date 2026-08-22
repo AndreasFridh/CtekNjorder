@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.3
+
+- Added the add-on icon and logo, so it no longer shows a generic placeholder
+  in the add-on store.
+
 ## 0.9.2
 
 - **Fixed: a charger never recovered from losing its connection.** We connect
