@@ -470,9 +470,6 @@ function renderChargers(s) {
     if (c.fuse_rating != null) rows.push(row('Charger rating', c.fuse_rating + ' A'));
     if (c.min_allowed_current != null)
       rows.push(row('Charger minimum', c.min_allowed_current + ' A'));
-    if (LAST && LAST.meter && LAST.meter.period != null)
-      rows.push(row('Meter rate', LAST.meter.period + ' s' +
-                    (LAST.meter.measured ? '' : ' (assumed)')));
 
     const L = c.link || {};
     const link = L.samples
@@ -696,6 +693,12 @@ function renderCharts(h) {
     { label: `Fuse ${h.main_fuse} A`, color: css('--bad') },
     ...(h.resolution === '1m'
       ? [{ label: 'per-minute peaks', color: 'transparent' }] : []),
+    // How often this feed actually reports. It paces every correction, and it
+    // belongs to the meter rather than to any one charger.
+    ...(LAST && LAST.meter && LAST.meter.period != null
+      ? [{ label: 'reports every ' + LAST.meter.period + ' s' +
+                  (LAST.meter.measured ? '' : ' (assumed)'),
+          color: 'transparent' }] : []),
   ]);
 
   // --- allowed vs actually drawn ---

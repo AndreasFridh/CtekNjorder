@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.3
+
+- Moved the measured meter rate off the charger cards and onto the meter chart,
+  where it belongs: there is one meter for the property, so on the cards it was
+  simply repeated once per charger. The cards keep the charger's own rating and
+  minimum, which really are per charger.
+
 ## 0.15.2
 
 Diagnostics, after a report of charging still capped at 6 A on a free grid.
