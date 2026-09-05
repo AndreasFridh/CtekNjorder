@@ -36,7 +36,7 @@ from .allocator import (
     ChargerDemand, DemandTracker, allocate, apply_dwell,
 )
 from .balancer import (
-    Balancer, BalancerConfig, BaselineFilter, car_draw_for_baseline,
+    Balancer, BalancerConfig, car_draw_for_baseline,
 )
 from .config import Options
 from .costs import CostTracker, charging_allowed, price_per_kwh
@@ -46,6 +46,7 @@ from .netmon import LinkMonitor
 from .history import History
 from .optionspec import LIVE_KEYS
 from .protocol import PHASE_ROTATIONS
+from .regulator import Regulator
 from .sessions import SessionLog
 from .web import WebUI
 
@@ -112,7 +113,7 @@ class Service:
         self.session_log = SessionLog()
         self.costs = CostTracker(on_complete=self._record_session)
         self.links = LinkMonitor()
-        self.baseline_filter = BaselineFilter()
+        self.regulator = Regulator()
         self.web = WebUI(self)
         self.history = History()
 
@@ -249,52 +250,56 @@ class Service:
                 used_phases.update(self._phases_of(states[client.id]))
             ev_uses = [1 if p in used_phases else 0 for p in range(3)]
 
-            # Derive the baseline here rather than inside the balancer: with
-            # several chargers the subtraction spans several sources, and the
-            # result needs steadying before anything is decided from it.
-            raw_baseline = (
+            # What the meter must stay under, and what the cars are taking.
+            limit = opts.main_fuse - opts.safety_margin
+            ceiling = float(aggregate_ceiling)
+            min_current = float(self.balancer.cfg.min_allowed_current)
+
+            # The house baseline is no longer derived at all. Subtracting the
+            # cars out of the meter puts what we allow back into what we allow
+            # next, with a gain of one and a delay of one meter period, and that
+            # oscillates however carefully it is gated. The meter reading is the
+            # quantity that has to stay under the fuse, so it is regulated
+            # directly instead - see regulator.py.
+            fresh = self.regulator.note_reading(house_ts) if house_ts else False
+            settled_since = max(
+                (self._alloc_changed_at.get(c.id, -1e9) for c in bound),
+                default=-1e9,
+            )
+            ready = self.regulator.ready(now, settled_since, opts.meter_lag)
+
+            if current and fresh and ready:
+                allowed = self.regulator.step(
+                    now, current, limit, total_car, ceiling, min_current)
+                self.last_step_at = wall
+                # The one line that explains any setpoint this thing chooses.
+                _LOG.debug(
+                    "regulator: meter=%s limit=%.1f cars=%s -> allowed=%s "
+                    "(meter reports every %.1fs)",
+                    [round(c, 1) for c in current], limit,
+                    [round(c, 1) for c in total_car],
+                    [round(a, 1) for a in allowed],
+                    self.regulator.cadence.period,
+                )
+            else:
+                # Nothing new to learn from, or the reading in hand predates the
+                # last change. Holding is right either way: correcting against a
+                # reading taken before the change is what started the cycling.
+                allowed = self.regulator.hold()
+
+            # Kept only so the dashboard can still show what the house is doing.
+            self.last_baseline = (
                 [max(0.0, current[p] - total_car[p]) for p in range(3)]
                 if current else None
             )
-            # The baseline is a subtraction between two things measured at
-            # different moments, so it is only meaningful once both have
-            # settled. Two ways it can be untrustworthy:
-            #
-            # 1. A car is still moving toward its allowance. Note that this
-            #    includes a car winding DOWN to zero - which was previously
-            #    skipped, because the check ignored chargers allocated 0. That
-            #    is the worst case there is: the meter still holds the old high
-            #    draw while the charger reports almost none, so the subtraction
-            #    credits the car's current to the house, the headroom collapses,
-            #    and the max-hold filter latches that for its whole window. The
-            #    car stops, the meter catches up, charging restarts, and round
-            #    it goes - which is exactly what a start/stop cycle looks like.
-            #
-            # 2. Everything has settled, but the meter reading in hand was
-            #    taken before it did. A P1 meter reports every ten seconds or
-            #    so, and a reading from before the last change describes a
-            #    world that no longer exists.
-            drawn_now = {
-                c.id: (max(states[c.id]["current"]) if states[c.id]["current"] else 0.0)
-                for c in bound
-            }
-            moving = any(
-                abs(drawn_now[c.id] - self.allocation.get(c.id, 0)) > 1.5
-                for c in bound
-            )
-            settled_for = min(
-                (now - self._alloc_changed_at.get(c.id, -1e9) for c in bound),
-                default=1e9,
-            )
-            trust = not moving and settled_for >= opts.meter_lag
-            baseline = self.baseline_filter.update(wall, raw_baseline, trust=trust)
 
-            decision = self.balancer.compute(
+            decision = self.balancer.from_headroom(
                 now=now,
-                house_current=baseline,
-                house_age=age,
-                charger_current=[0.0, 0.0, 0.0],   # already subtracted above
+                headroom=allowed if current else None,
+                data_age=age,
+                charger_current=total_car,
                 ev_uses_phase=ev_uses,
+                baseline=self.last_baseline or [],
             )
             self.last_decision = decision
 
@@ -492,6 +497,12 @@ class Service:
                 "hass": self.hass.connected,
             },
             "chargers": chargers,
+            "meter": {
+                **self.regulator.cadence.as_dict(),
+                "allowed": [round(a, 1) for a in self.regulator.allowed],
+                "last_step_age": (round(time.time() - self.last_step_at, 1)
+                                  if self.last_step_at else None),
+            },
             "house": {
                 "current": self.last_house,
                 "voltage": self.house_voltage(),

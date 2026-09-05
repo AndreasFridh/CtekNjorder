@@ -501,6 +501,10 @@ function renderStats(s) {
     ['Energy', c.energy === null ? '–' : (c.energy / 1000).toFixed(1) + ' kWh'],
 
     ['Meter age', s.house.age === null ? '–' : s.house.age + ' s'],
+    // How often the meter actually reports. Everything about how fast current
+    // can be adjusted follows from this, and it used to be invisible.
+    ['Meter rate', !s.meter ? '–' : s.meter.period + ' s' +
+      (s.meter.measured ? ' (measured)' : ' (assumed)')],
     ['Charger serial', esc(c.serial) || '–', true],
   ];
   // `v` is already escaped where it came from outside; `k` is ours.

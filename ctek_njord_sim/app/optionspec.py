@@ -128,13 +128,12 @@ SPECS: tuple[Spec, ...] = (
               "Pausing stays immediate. Many cars fault and refuse to charge "
               "after several quick stop-start cycles, so restarts are made "
               "deliberately slow."),
-    Spec("meter_lag", "Meter lag", "float", "Behaviour",
+    Spec("meter_lag", "Meter lag floor", "float", "Behaviour",
          min=0, max=60, step=1, unit="s", advanced=True,
-         help="How long your meter takes to reflect a change. A P1 meter "
-              "reports every ten seconds or so, and a reading taken before the "
-              "last change describes a world that no longer exists - so the "
-              "house baseline is not re-derived until this long after one. "
-              "Raise it if charging starts and stops repeatedly."),
+         help="Leave at 0 and the meter's reporting rate is measured "
+              "automatically, which is what almost everyone should do. A "
+              "non-zero value is a floor on that measurement, for a meter "
+              "whose readings arrive at an irregular rate."),
     Spec("ping_interval", "Link check interval", "int", "Behaviour",
          min=5, max=600, unit="s", advanced=True,
          help="How often to measure the connection to each charger. A TCP "

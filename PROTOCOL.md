@@ -144,6 +144,13 @@ gives a house baseline of roughly `[2.8, 4.1, 3.4]` A.
 `setpoint` must then snap to the legal set: **0, or 6–16 A**. There is no valid
 value between 1 and 5 — below `MinAllowedCurrent` the only option is to pause.
 
+**This describes the Nanogrid Air, not this add-on.** The subtraction above is
+a feedback loop with a gain of one and a delay of one meter reading, and it
+oscillates on any meter slower than the captures' — which is presumably why the
+adapter also waits three readings before raising. This add-on used to copy it
+and now does not; see `app/regulator.py`. The snapping rule and the legal value
+set on the line above are the charger's, and still apply.
+
 ### Phase rotation
 
 `StationPhaseRotation: "RST"` is straight-through (charger L1→meter L1, etc.).

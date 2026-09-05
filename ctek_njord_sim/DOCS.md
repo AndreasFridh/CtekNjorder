@@ -55,8 +55,8 @@ A charger that has never answered is reported separately from one that was
 working and dropped off, because the first usually just means an address for a
 charger that does not exist.
 
-The meter sees every car at once, so the house baseline is the reading minus
-all of them, and whatever headroom remains is divided.
+The meter sees every car at once, so there is one allowance for the whole
+property, and it is divided between the cars that want it.
 
 **Sharing** decides how:
 
@@ -116,9 +116,10 @@ sensor.p1_meter_current_phase_2
 sensor.p1_meter_current_phase_3
 ```
 
-These must measure the **whole property**, including the charger. The add-on
-subtracts the car's own draw itself; if you give it a circuit that excludes the
-car, it will over-estimate your spare capacity.
+These must measure the **whole property**, including the charger. The
+balancing works by keeping this reading under your fuse, so a circuit that
+excludes the car leaves the car's own draw invisible and your spare capacity
+over-estimated.
 
 `voltage_entities`, `power_in_entity` and `power_out_entity` are optional and
 only affect the meter data mirrored back to the charger, not the balancing.
@@ -203,10 +204,26 @@ unreachable.
 ## How it decides
 
 ```
-baseline = house_current - car_current      (per phase)
-headroom = main_fuse - safety_margin - baseline
-setpoint = the lowest headroom across the phases the car uses
+error   = (main_fuse - safety_margin) - house_current      (per phase)
+
+raising:   allowed = allowed + error / 2      gradual, and damped
+shedding:  allowed = car_current + error      immediate, and exact
+
+setpoint = the lowest allowance across the phases the car uses
 ```
+
+`house_current` is the meter reading exactly as it comes, cars included. The
+car is deliberately *not* subtracted out of it. Subtracting gives an allowance
+that contains the previous allowance, which comes back through the meter a few
+seconds later and sets the next one — a loop with a gain of one and a delay of
+one meter reading, which oscillates by construction rather than by mistake.
+Correcting the reading itself leaves the response a choice, and the two
+directions are chosen differently. Raising moves half the distance, so it
+converges instead of ringing. Shedding goes straight to the answer, measured
+against what the cars are drawing at the same instant the meter was read — the
+safe direction is never slowed, and anchoring it on the draw rather than on the
+allowance stops a lagging meter walking the setpoint down a few amps at a
+time.
 
 The result is snapped to what the charger will accept: **0 A, or 6–16 A**.
 There is no value between 1 and 5 A — below the 6 A floor an EV must stop
@@ -218,19 +235,40 @@ rather than charge slower, so the add-on commands 0 and pauses.
   matching what the real adapter does.
 - **Sheds fast, restores slowly.** Overload throttles within a second. Raising
   waits `raise_delay` so the setpoint cannot oscillate.
+- **Waits for the meter, and works out for itself how long that is.** A
+  reading that predates the last change describes a house that no longer
+  exists, so no correction is made until a full reporting period has passed
+  since then. That period is measured from how often readings actually arrive,
+  because meters differ. Nothing needs configuring. The measured rate is shown
+  on the dashboard as **Meter rate**.
+
+  Arrivals only ever set a lower bound on it: a meter can publish every two
+  seconds and still describe the house as it was ten seconds ago. A ten-second
+  floor is therefore applied — the usual P1 period, and faster than any meter
+  of this kind reflects a change.
 - **Ignores its own wake.** For a few seconds after each change the car is
-  still ramping and the meter still reports its previous draw, which briefly
-  inflates the computed baseline. The add-on holds instead of throttling
-  against that transient. Pausing is exempt, so a real overload is never
-  delayed.
+  still ramping and the meter still reports its previous draw. The add-on
+  holds instead of throttling against that transient. Pausing is exempt, so a
+  real overload is never delayed.
+- **Cannot bank current a car is not taking.** The allowance is never allowed
+  to run far above what the cars actually draw, so it cannot drift up to the
+  ceiling while a car declines it and then overshoot the moment it starts.
+- **Compares like with like.** A reading describes the house as it was up to a
+  reporting period ago, so the car draw inside it is that old too, and what the
+  car is taking this second may be nothing like it. Rather than guess, each
+  direction uses the end of the recent draw range that cannot cost anything:
+  the lowest when granting more, so current is never handed out against amps
+  the meter has not seen; the highest when cutting back, so a car is not
+  charged twice for a reduction it has already made.
+- **Never offers room that is not there.** A paused car is not in the meter
+  reading, so the reading sits under the limit even when the house has taken
+  nearly all of it. What may be offered is capped by the room actually
+  available, not just by the 6 A floor a car needs to start — below that floor
+  the answer is to stay paused.
 - **Falls back when blind.** If the current entities go stale or unavailable
   for longer than `stale_timeout`, it drops to `fallback_current` rather than
-  guessing.
-- **Never counts the car against itself, and never over-counts it either.**
-  The car's own draw is subtracted from the meter reading so it does not
-  consume its own allowance. But if the charger stops reporting, none of the
-  reading is attributed to the car: over-subtracting would understate the
-  house load and hand out current that is not there.
+  guessing. A charger that stops reporting is treated the same way: it stops
+  counting as a car that could give current back.
 
 ## Options
 
@@ -251,7 +289,9 @@ rather than charge slower, so the add-on commands 0 and pauses.
 | `stale_timeout` | `30` | Seconds before readings count as stale. |
 | `fallback_current` | `6` | Commanded when flying blind. |
 | `raise_delay` | `30` | Seconds of sustained headroom before raising. |
-| `settle_window` | `10` | Seconds after a change when the baseline is untrusted. |
+| `settle_window` | `10` | Seconds after a change when the reading is untrusted. |
+| `meter_lag` | `0` | Floor on the meter's measured reporting rate. `0` measures it. |
+| `restart_hold` | `90` | Seconds a paused car must wait before restarting. |
 | `settle_tolerance` | `1.5` | Amps of command-vs-actual mismatch counted as "still ramping". |
 | `control_interval` | `15` | Setpoint heartbeat, seconds. |
 | `meter_interval` | `10` | Meter data cadence, seconds. |
@@ -285,12 +325,12 @@ It reached the broker but saw no retained configuration topic. Confirm the IP,
 and that the charger is powered and on the same network.
 
 **Charging keeps starting and stopping**
-Raise **Meter lag** to match how often your meter really reports - ten seconds
-or more for a P1. The house baseline is worked out by subtracting the car from
-the meter reading, and if the meter has not caught up with the last change that
-subtraction credits the car's own current to the house. **Restart hold** also
-sets a floor on how often a car can be started again after a pause; cars fault
-after several quick cycles.
+Check **Meter rate** on the dashboard first. The add-on paces itself to that
+figure automatically, so this should not need tuning — but if it reads far
+lower than your meter really reports, its readings are arriving irregularly
+and you can put a floor under it with **Meter lag floor**. **Restart hold**
+separately limits how often a car may be started again after a pause; cars
+fault after several quick cycles.
 
 **The setpoint flaps between values**
 Increase `settle_window` if your car ramps slowly, or `raise_delay` if the
