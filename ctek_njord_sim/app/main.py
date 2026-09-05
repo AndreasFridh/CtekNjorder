@@ -49,6 +49,7 @@ from .protocol import PHASE_ROTATIONS
 from .regulator import Regulator
 from .sessions import SessionLog
 from .web import WebUI
+from . import supervisor
 
 _LOG = logging.getLogger("ctek")
 
@@ -72,6 +73,7 @@ class Service:
     def __init__(self, opts: Options):
         self.opts = opts
         self.started_at = time.time()
+        self.version: str | None = None
         self.hass = HassClient(
             opts.current_entities
             + opts.voltage_entities
@@ -495,6 +497,7 @@ class Service:
         return {
             "now": time.time(),
             "uptime": time.time() - self.started_at,
+            "version": self.version,
             "dry_run": self.opts.dry_run,
             "strategy": self.opts.allocation_strategy,
             "charging_permitted": self.permitted,
@@ -621,6 +624,14 @@ class Service:
                 )
 
     async def run(self) -> None:
+        if supervisor.available():
+            # Best effort: the UI just shows "unknown" if the Supervisor is not
+            # there, which is the case on the offline rig.
+            try:
+                self.version = await supervisor.get_version()
+                _LOG.info("CtekNjorder %s", self.version)
+            except Exception as exc:                     # noqa: BLE001
+                _LOG.debug("could not read the add-on version: %s", exc)
         for client in self.clients:
             client.start()
         await self.web.start()

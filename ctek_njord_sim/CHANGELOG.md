@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.15.1
+
+- **The running version is shown in the web UI footer.** There was no way to
+  tell from the outside which build was live, which makes "the behaviour does
+  not match the changelog" impossible to diagnose - the answer is usually that
+  the update has not landed. Check it against the version on the add-on page.
+
+## 0.15.1
+
+Version bump only — no code change from 0.15.0. Published so the Supervisor
+offers the update to installations that did not pick up the previous release.
+
 ## 0.15.0
 
 **Update if charging is capped at 6 A while the grid is free.** Reported from a

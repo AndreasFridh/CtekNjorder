@@ -47,6 +47,18 @@ async def get_options() -> dict:
     return (body.get("data") or {}).get("options") or {}
 
 
+async def get_version() -> str | None:
+    """
+    The version the Supervisor believes is running.
+
+    Shown in the UI because there is otherwise no way to tell from the outside
+    which build is live, and "did the update actually land" is the first
+    question worth answering when behaviour does not match the changelog.
+    """
+    body = await _json("GET", f"{SUPERVISOR}/addons/self/info")
+    return (body.get("data") or {}).get("version")
+
+
 async def set_options(changes: dict) -> None:
     """
     Persist option changes.
