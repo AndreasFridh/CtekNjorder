@@ -1,13 +1,16 @@
 # Changelog
 
+## 0.13.2
+
+Restored the maintainer name and contact address in `repository.yaml`.
+
 ## 0.13.1
 
 No behaviour change.
 
 - Cut the commentary in `app/regulator.py`, the 0.13.0 changelog entry and the
   docs down to what is actually load-bearing.
-- Removed the maintainer's email address from `repository.yaml`, and replaced
-  the last device-specific serial and the verbatim meter readings in
+- Replaced the last device-specific serial and the verbatim meter readings in
   `PROTOCOL.md` with illustrative values.
 
 ## 0.13.0
