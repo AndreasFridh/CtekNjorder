@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.15.0
+
+**Update if charging is capped at 6 A while the grid is free.** Reported from a
+live install: a quiet house, nothing else drawing, and the charger still only
+allowed the 6 A minimum.
+
+- **The full available current is now offered.** An anti-windup rule held the
+  allowance to roughly what the cars were already drawing, which with nothing
+  drawing meant the 6 A floor - regardless of how much room there was. It was
+  written before the rule beneath it, which caps the offer at what the house
+  can actually absorb, and that one already guarantees the safety property: a
+  car taking every amp offered still lands at or below the limit. The older
+  rule only throttled charging, so it is gone.
+
+- **A quiet house no longer freezes the allowance.** Home Assistant sends
+  nothing when a value repeats, so a steady house looks the same as a dead
+  feed. Steps were conditioned on the reading having *changed*, which stopped
+  the allowance rising exactly when the house was quietest and there was most
+  to give away - a charger sat at 10 A with 16 A free, indefinitely. Pacing is
+  now purely a matter of elapsed time; a feed that has really died is still
+  caught by `stale_timeout`.
+
+- **The overload backstop no longer ratchets a car into a needless pause.** It
+  took the overshoot off the current allowance every tick, so as the allowance
+  fell and the lagging meter still showed the same overshoot, it came off
+  again - walking a car with 10 A of room down to a stop in two ticks, and then
+  restarting it. It now measures from what the cars were drawing when the
+  reading was taken, the same anchor shedding uses.
+
+- **A charger with no car is offered the current that exists**, rather than a
+  token minimum, so a car plugged into a quiet house starts at full rate
+  instead of climbing from 6 A. Where several are idle they share what is
+  spare, and serve fewer chargers rather than putting every one below the 6 A
+  floor.
+
 ## 0.14.0
 
 **Update if the allowed current square-waves on a charger with no car.**

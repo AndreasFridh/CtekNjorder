@@ -39,9 +39,9 @@ class Clock:
         self.t = 0.0
         self.dt = step_seconds
 
-    def step(self, meter, limit, drawn, ceiling, min_current):
+    def step(self, meter, limit, drawn, ceiling):
         self.t += self.dt
-        return self.r.step(self.t, meter, limit, drawn, ceiling, min_current)
+        return self.r.step(self.t, meter, limit, drawn, ceiling)
 
 
 # ---------- measuring the meter, rather than being told ----------
@@ -126,13 +126,41 @@ def test_a_configured_floor_can_slow_the_pacing_further():
     assert not r.ready(now=100.0, changed_at=88.0, min_period=20.0)
 
 
+def test_a_steady_house_does_not_freeze_the_allowance():
+    """
+    Home Assistant sends nothing when a value repeats, so a quiet house looks
+    identical to a dead feed. Requiring the reading to have CHANGED froze the
+    allowance exactly when the house was quietest and there was most room to
+    give away - a charger sat at 10 A with 16 A free, indefinitely.
+    """
+    r = Regulator()
+    r.note_reading(100.0)              # one reading, and then nothing ever again
+    t = 100.0
+    for _ in range(6):
+        t += r.LAG_FLOOR + 1
+        if r.ready(t, changed_at=0.0):
+            r.step(t, three(4.0), LIMIT, three(0.0), CEILING)
+    assert max(r.allowed) == pytest.approx(CEILING), (
+        "a house that stopped changing should not stop the allowance rising"
+    )
+
+
+def test_steps_cannot_outrun_the_meter_even_when_the_allocation_sits_still():
+    """The other half: pacing must hold whether or not the allocation moves."""
+    r = Regulator()
+    assert r.ready(1000.0, changed_at=0.0), "nothing stepped yet"
+    r.step(1000.0, three(4.0), LIMIT, three(0.0), CEILING)
+    assert not r.ready(1000.0 + r.LAG_FLOOR - 1, changed_at=0.0)
+    assert r.ready(1000.0 + r.LAG_FLOOR + 1, changed_at=0.0)
+
+
 # ---------- the control law ----------
 
 def test_it_climbs_toward_the_limit_rather_than_jumping():
     """Half the error each step, so the loop converges instead of ringing."""
     r = Regulator()
     clk = Clock(r)
-    first = clk.step(three(4.0), LIMIT, three(0.0), CEILING, MIN)[0]
+    first = clk.step(three(4.0), LIMIT, three(0.0), CEILING)[0]
     assert 0 < first <= CEILING
     assert first < CEILING, "a single step must not go straight to full current"
 
@@ -142,7 +170,7 @@ def test_being_over_the_limit_is_corrected_at_once():
     r = Regulator()
     clk = Clock(r)
     r.allowed = three(16.0)
-    after = clk.step(three(30.0), LIMIT, three(16.0), CEILING, MIN)[0]
+    after = clk.step(three(30.0), LIMIT, three(16.0), CEILING)[0]
     assert after == pytest.approx(16.0 - 6.0), "the whole 6 A overshoot, in one step"
 
 
@@ -157,7 +185,7 @@ def test_shedding_measures_from_the_draw_not_from_the_allowance():
     r.allowed = three(13.0)          # granted
     drawn = 12.0                     # actually taken
     house = 14.0
-    after = clk.step(three(house + drawn), LIMIT, three(drawn), CEILING, MIN)[0]
+    after = clk.step(three(house + drawn), LIMIT, three(drawn), CEILING)[0]
 
     assert after == pytest.approx(LIMIT - house), "should land on the real answer"
     assert after > 6.0, "must not walk down toward the minimum"
@@ -169,9 +197,9 @@ def test_a_shed_holds_once_it_is_right_rather_than_creeping_down():
     r.allowed = three(13.0)
     drawn = 12.0
     house = 14.0
-    first = clk.step(three(house + drawn), LIMIT, three(drawn), CEILING, MIN)[0]
+    first = clk.step(three(house + drawn), LIMIT, three(drawn), CEILING)[0]
     # The car obeys, and the meter now reflects it.
-    second = clk.step(three(house + first), LIMIT, three(first), CEILING, MIN)[0]
+    second = clk.step(three(house + first), LIMIT, three(first), CEILING)[0]
     assert second == pytest.approx(first), "shed twice for one overload"
 
 
@@ -179,7 +207,7 @@ def test_the_allowance_never_exceeds_the_ceiling():
     r = Regulator()
     clk = Clock(r)
     for _ in range(30):
-        clk.step(three(0.0), LIMIT, three(16.0), CEILING, MIN)
+        clk.step(three(0.0), LIMIT, three(16.0), CEILING)
     assert max(r.allowed) <= CEILING
 
 
@@ -187,22 +215,28 @@ def test_the_allowance_never_goes_negative():
     r = Regulator()
     clk = Clock(r)
     for _ in range(30):
-        clk.step(three(60.0), LIMIT, three(0.0), CEILING, MIN)
+        clk.step(three(60.0), LIMIT, three(0.0), CEILING)
     assert min(r.allowed) >= 0.0
 
 
 # ---------- anti-windup ----------
 
-def test_allowance_cannot_be_banked_while_a_car_declines_it():
+def test_a_car_declining_its_offer_does_not_shrink_the_offer():
     """
-    Otherwise the total drifts up to the ceiling against a car that is not
-    taking it, and overshoots the moment the car finally draws.
+    The allowance answers "how much could be drawn", not "how much is being
+    drawn". A car taking 4 A of a quiet house has not made the house busier,
+    and throttling the offer to just above its draw only means the next car -
+    or the same car waking up - has to climb back from nothing.
+
+    What must hold is that the offer stays inside what the house can absorb.
     """
     r = Regulator()
     clk = Clock(r)
+    house, drawn = 1.0, 4.0
     for _ in range(20):
-        clk.step(three(5.0), LIMIT, three(4.0), CEILING, MIN)   # car stuck at 4 A
-    assert max(r.allowed) <= 4.0 + r.SLACK + 0.01
+        clk.step(three(house + drawn), LIMIT, three(drawn), CEILING)
+    assert max(r.allowed) == pytest.approx(CEILING), "a quiet house has room to spare"
+    assert max(r.allowed) + house <= LIMIT, "and the offer still fits under the fuse"
 
 
 def test_a_car_that_has_not_started_is_still_offered_enough_to_start():
@@ -210,7 +244,7 @@ def test_a_car_that_has_not_started_is_still_offered_enough_to_start():
     r = Regulator()
     clk = Clock(r)
     for _ in range(10):
-        clk.step(three(4.0), LIMIT, three(0.0), CEILING, MIN)
+        clk.step(three(4.0), LIMIT, three(0.0), CEILING)
     assert max(r.allowed) >= MIN
 
 
@@ -229,7 +263,7 @@ def test_a_car_winding_down_cannot_ratchet_its_own_allowance_to_zero():
     stale_meter = house + 13.0       # the meter still sees the old draw
 
     for _ in range(6):
-        allowed = clk.step(three(stale_meter), LIMIT, three(car), CEILING, MIN)[0]
+        allowed = clk.step(three(stale_meter), LIMIT, three(car), CEILING)[0]
         car = allowed                # the car obeys immediately
 
     assert allowed >= 9.0, (
@@ -237,32 +271,33 @@ def test_a_car_winding_down_cannot_ratchet_its_own_allowance_to_zero():
     )
 
 
-def test_a_ramping_car_cannot_ratchet_its_own_allowance_up():
+def test_a_ramping_car_cannot_ratchet_past_what_the_house_can_absorb():
     """
-    A stale reading paired with a live draw grants current the meter has not
-    seen; the car takes it and is granted more, climbing without the meter
-    getting a say until it catches up and forces a hard cut to zero.
+    A stale reading paired with a live draw once let a car climb without the
+    meter getting a say, until the reading caught up and forced a hard cut to
+    zero. Pairing the reading with a draw of matching age bounds the offer by
+    the room that genuinely exists, however far behind the meter is.
     """
     r = Regulator()
     clk = Clock(r, step_seconds=2.0)     # stepping faster than the meter reports
-    stale_meter = 10.0                   # the house as it was, car at 6 A
+    house = 4.0
     car = 6.0
+    stale_meter = house + car            # the meter is stuck on this
 
     for _ in range(6):
-        allowed = clk.step(three(stale_meter), LIMIT, three(car), CEILING, MIN)[0]
+        allowed = clk.step(three(stale_meter), LIMIT, three(car), CEILING)[0]
         car = allowed                    # the car takes whatever it is offered
 
-    assert allowed <= 6.0 + r.SLACK + 0.01, (
-        f"allowance ratcheted to {allowed:.1f}A on a meter that never moved"
+    assert allowed + house <= LIMIT + 0.01, (
+        f"offered {allowed:.1f}A into a house drawing {house}A, past a {LIMIT}A limit"
     )
 
 
 def test_a_paused_car_is_not_offered_room_that_does_not_exist():
     """
-    A paused car draws nothing, so it is absent from the reading and the error
-    stays positive however loaded the house is. Nothing about a positive error
-    looks like an overload, so the start floor alone would offer 6 A into
-    3.5 A of capacity.
+    The dangerous case. A paused car draws nothing, so it is absent from the
+    reading and the error stays positive however loaded the house is - nothing
+    about a positive error looks like an overload.
     """
     r = Regulator()
     clk = Clock(r)
@@ -270,12 +305,12 @@ def test_a_paused_car_is_not_offered_room_that_does_not_exist():
     r.allowed = three(6.0)
 
     for _ in range(5):
-        allowed = clk.step(three(house), LIMIT, three(0.0), CEILING, MIN)[0]
+        allowed = clk.step(three(house), LIMIT, three(0.0), CEILING)[0]
 
     assert allowed <= LIMIT - house + 0.01, (
         f"offered {allowed:.1f}A into {LIMIT - house:.1f}A of capacity"
     )
-    assert allowed < MIN, "below the legal minimum, so this must snap to a pause"
+    assert allowed < 6.0, "below the legal minimum, so this must snap to a pause"
 
 
 def test_capacity_does_not_get_in_the_way_when_there_is_plenty():
@@ -283,8 +318,64 @@ def test_capacity_does_not_get_in_the_way_when_there_is_plenty():
     r = Regulator()
     clk = Clock(r)
     for _ in range(5):
-        allowed = clk.step(three(4.0), LIMIT, three(0.0), CEILING, MIN)[0]
-    assert allowed >= MIN
+        allowed = clk.step(three(4.0), LIMIT, three(0.0), CEILING)[0]
+    assert allowed == pytest.approx(CEILING), (
+        "a quiet house should offer the charger's full rating"
+    )
+
+
+def test_the_backstop_lands_on_the_answer_instead_of_ratcheting():
+    """
+    The control loop has an independent backstop that fires straight off a
+    reading over the limit, without waiting for a step to be due. It used to
+    take the overshoot off the current allowance, which ratchets: the allowance
+    drops, the stale reading still shows the same overshoot, and it comes off
+    again. On the rig that walked a car with 10 A of room down to a pause in
+    two ticks, and then restarted it - the stop-start cycle that faults cars.
+    """
+    r = Regulator()
+    clk = Clock(r, step_seconds=2.0)
+    house, car = 14.0, 16.0
+    clk.step(three(house + car), LIMIT, three(car), CEILING)
+
+    over_limit = three(house + car)          # 30 A against a 24 A limit
+    first = r.shed_target(over_limit, LIMIT)
+    assert first == pytest.approx(LIMIT - house), "should land on the real answer"
+
+    # Called again on the same stale reading, it must not cut deeper.
+    assert r.shed_target(over_limit, LIMIT) == pytest.approx(first)
+    assert first >= 6.0, "must not walk down into a pause"
+
+
+def test_the_backstop_is_read_only():
+    """It runs on ticks where no step is due, so it must not advance state."""
+    r = Regulator()
+    clk = Clock(r)
+    clk.step(three(10.0), LIMIT, three(6.0), CEILING)
+    before = list(r.allowed), r._stepped_at
+    r.shed_target(three(30.0), LIMIT)
+    assert (list(r.allowed), r._stepped_at) == before
+
+
+def test_the_draw_window_keeps_the_previous_step():
+    """
+    Steps are paced one settling period apart, so the previous sample lands
+    exactly on the window cutoff and a fraction of a second of jitter drops it.
+    That leaves only the draw taken at this very moment - the one the reading
+    definitely does not reflect - and a shed then measures against the car's
+    own already-reduced draw and stops it.
+    """
+    r = Regulator()
+    period = r.settling_period()
+    house = 14.0
+    r.step(1000.0, three(house + 16.0), LIMIT, three(16.0), CEILING)
+    # A hair over a full period later, as the real loop does.
+    r.step(1000.0 + period + 0.01, three(house + 16.0), LIMIT, three(9.0), CEILING)
+
+    assert r.allowed[0] == pytest.approx(LIMIT - house, abs=0.2), (
+        "should shed to the room that exists, not past it"
+    )
+    assert r.allowed[0] >= 6.0, "and must not walk into a pause"
 
 
 # ---------- the whole point: no oscillation under lag ----------
@@ -302,7 +393,7 @@ def simulate(meter_lag_steps: int, steps: int = 40, house: float = 4.0):
 
     for _ in range(steps):
         reading = pipeline.pop(0)
-        allowed = clk.step(three(reading), LIMIT, three(car), CEILING, MIN)[0]
+        allowed = clk.step(three(reading), LIMIT, three(car), CEILING)[0]
         # The car follows what it is allowed, and the meter sees it later.
         car = min(allowed, CEILING)
         pipeline.append(house + car)
@@ -340,7 +431,7 @@ def test_a_step_change_in_house_load_is_absorbed_without_ringing():
     pipeline = [4.0, 4.0]
     for _ in range(20):                     # settle at a quiet house
         reading = pipeline.pop(0)
-        allowed = clk.step(three(reading), LIMIT, three(car), CEILING, MIN)[0]
+        allowed = clk.step(three(reading), LIMIT, three(car), CEILING)[0]
         car = allowed
         pipeline.append(4.0 + car)
 
@@ -348,7 +439,7 @@ def test_a_step_change_in_house_load_is_absorbed_without_ringing():
     tail = []
     for _ in range(25):
         reading = pipeline.pop(0)
-        allowed = clk.step(three(reading), LIMIT, three(car), CEILING, MIN)[0]
+        allowed = clk.step(three(reading), LIMIT, three(car), CEILING)[0]
         car = allowed
         pipeline.append(house + car)
         tail.append(allowed)
@@ -368,7 +459,7 @@ def test_holding_does_not_forget_a_raise_the_balancer_is_waiting_on():
     """
     r = Regulator()
     clk = Clock(r)
-    clk.step(three(10.0), LIMIT, three(6.0), CEILING, MIN)
+    clk.step(three(10.0), LIMIT, three(6.0), CEILING)
     raised = r.allowed[0]
     assert raised > 6.0, "should be asking for more than the car has"
 
@@ -377,29 +468,30 @@ def test_holding_does_not_forget_a_raise_the_balancer_is_waiting_on():
         assert r.hold()[0] == pytest.approx(raised), "the pending raise was lost"
 
 
-def test_the_allowance_is_bounded_by_draw_not_by_what_was_commanded():
+def test_the_allowance_is_bounded_by_the_house_not_by_our_own_command():
     """
-    Draw is measured; the command is our own opinion. An integrator reset by
-    its own output cannot climb.
+    The command is our own opinion; an integrator reset by its own output
+    cannot climb. What legitimately bounds the offer is the meter.
     """
     r = Regulator()
     clk = Clock(r)
+    house, drawn = 4.0, 8.0
     for _ in range(20):
-        # Above the 6 A floor, so the draw bound is what is being tested.
-        clk.step(three(12.0), LIMIT, three(8.0), CEILING, MIN)
-    assert max(r.allowed) <= 8.0 + r.SLACK + 0.01
+        clk.step(three(house + drawn), LIMIT, three(drawn), CEILING)
+    assert max(r.allowed) + house <= LIMIT + 0.01
+    assert max(r.allowed) > drawn, "spare room should be offered, not withheld"
 
 
-def test_a_gate_that_stops_the_car_collapses_the_allowance_on_its_own():
+def test_a_gate_that_stops_the_car_does_not_shrink_the_offer():
     """
-    No explicit clamp is needed when charging is withheld: the cars draw
-    nothing, and the draw bound alone pulls the allowance back to the floor.
+    Withholding charging is the allocator's job, through the total cap - not
+    the regulator's. A car that stops drawing has not made the house busier, so
+    the room on offer is unchanged; it simply is not handed out.
     """
     r = Regulator()
     clk = Clock(r)
     r.allowed = three(16.0)
     for _ in range(10):
-        clk.step(three(4.0), LIMIT, three(0.0), CEILING, MIN)
-    assert max(r.allowed) == pytest.approx(MIN), (
-        "an idle car should leave only enough on offer to restart"
-    )
+        clk.step(three(4.0), LIMIT, three(0.0), CEILING)
+    assert max(r.allowed) == pytest.approx(CEILING)
+    assert max(r.allowed) + 4.0 <= LIMIT

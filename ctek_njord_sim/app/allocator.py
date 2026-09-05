@@ -114,28 +114,50 @@ def water_fill(headroom: list[float], chargers: list[ChargerDemand]) -> dict[str
 def _standing_offers(headroom: list[float], demands: list[ChargerDemand],
                      alloc: dict[str, int], spare: float) -> list[str]:
     """
-    Leave a minimum offer on chargers nothing is asking for, out of what is
+    Leave an offer standing on chargers nothing is asking for, out of what is
     genuinely left over.
 
     Withdrawing current from an empty charger exists to free it for a car that
     wants it. When no car does, withdrawing achieves nothing and costs
-    something: the offer has to be rebuilt through a probe cycle before a car
-    plugged in later can start, and the setpoint visibly square-waves between
-    nothing and the minimum. Holding the offer steady means a car that arrives
-    begins at once.
+    something: the offer has to be rebuilt before a car plugged in later can
+    start, and the setpoint visibly square-waves. Holding it steady means a car
+    that arrives begins at once, at the rate the house can actually support.
 
-    Only ever paid for out of the surplus after every asking car is served, so
-    it can never take current from one that wants it.
+    Shared out the same way real demand is, so a lone charger on a quiet house
+    is offered its full rating rather than a token minimum. Only ever paid for
+    out of the surplus after every asking car is served, so it can never take
+    current from one that wants it.
     """
-    left = spare - sum(alloc.values())
+    residual = [
+        max(0.0, h - sum(alloc.get(d.id, 0) for d in demands if p in d.phases))
+        for p, h in enumerate(headroom)
+    ]
+    left = max(0.0, spare - sum(alloc.values()))
+    idle = [d for d in demands if alloc.get(d.id, 0) <= 0]
+    if not idle or left <= 0:
+        return []
+
+    # A charger with no car has shown no limit, so it may use its full rating.
+    idle = [ChargerDemand(**{**d.__dict__, "cap": float(d.max_current)})
+            for d in sorted(idle, key=lambda d: d.order)]
+    room = [min(r, left) for r in residual]
+
+    # Below its minimum a car must stop rather than charge slowly, so spread
+    # across fewer chargers rather than putting every one below the floor -
+    # the same rule the real split uses.
+    while idle:
+        raw = water_fill(room, idle)
+        if all(raw[d.id] >= d.min_current - EPS for d in idle):
+            break
+        idle.pop()
+    else:
+        return []
+
     standing: list[str] = []
-    for d in sorted(demands, key=lambda d: d.order):
-        if alloc.get(d.id, 0) > 0:
-            continue
-        room = min(left, *(headroom[p] for p in d.phases)) if d.phases else left
-        if room >= d.min_current:
-            alloc[d.id] = d.min_current
-            left -= d.min_current
+    for d in idle:
+        offer = min(int(raw[d.id]), d.max_current)
+        if offer >= d.min_current:
+            alloc[d.id] = offer
             standing.append(d.id)
     return standing
 

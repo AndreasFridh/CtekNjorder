@@ -90,7 +90,6 @@ class Regulator:
     """Per-phase incremental control of the total current EV charging may take."""
 
     RAISE_GAIN = 0.5      # half the error, so the loop converges rather than rings
-    SLACK = 3.0           # amps of allowance permitted above what is drawn
 
     # Minimum age to assume of a reading. Arrivals say how often the meter
     # publishes, not how stale its value is, and nothing in them can reveal the
@@ -107,6 +106,7 @@ class Regulator:
         self.spare: list[float] = [0.0] * PHASES
         self.cadence = MeterCadence()
         self._last_reading: float | None = None
+        self._stepped_at: float = -1e9
         self._draws: deque[tuple[float, list[float]]] = deque()
 
     # ---------- pacing ----------
@@ -133,12 +133,20 @@ class Regulator:
         """
         Is it safe to act on the reading in hand?
 
-        Only once a full settling period has passed since the last change, so
-        the reading being used was taken after that change took effect. Acting
-        sooner means correcting against the world as it was before, which is
-        precisely how the oscillation started.
+        Two clocks, both needing a full settling period: since the allocation
+        last changed, so the reading reflects that change rather than the world
+        before it; and since we last stepped, so corrections cannot outrun the
+        meter even while the allocation sits still.
+
+        Deliberately not conditioned on the reading having CHANGED. Home
+        Assistant sends nothing when a value repeats, so a genuinely steady
+        house looks identical to a dead feed - and requiring a change froze the
+        allowance whenever the house went quiet, which is exactly when there is
+        most room to give away. An unchanged reading is still a current
+        reading; a feed that has actually died is caught by `stale_timeout`.
         """
-        return (now - changed_at) >= self.settling_period(min_period)
+        period = self.settling_period(min_period)
+        return (now - changed_at) >= period and (now - self._stepped_at) >= period
 
     # ---------- control ----------
 
@@ -163,15 +171,46 @@ class Regulator:
         """
         self._draws.append((now, list(drawn)))
         cutoff = now - self.settling_period()
-        while len(self._draws) > 1 and self._draws[0][0] < cutoff:
+        # Never below two samples. Steps are paced one settling period apart, so
+        # the previous one sits exactly on the cutoff and a fraction of a second
+        # of jitter drops it - leaving only the draw taken at the same moment as
+        # this call, which is the one the reading definitely does NOT reflect.
+        # That is what a shed anchored on the window needs least: it made a car
+        # with 10 A of room shed against its own already-reduced draw and stop.
+        while len(self._draws) > 2 and self._draws[0][0] < cutoff:
             self._draws.popleft()
+        return self._window_bounds()
+
+    def _window_bounds(self) -> tuple[list[float], list[float]]:
+        if not self._draws:
+            return [0.0] * PHASES, [0.0] * PHASES
         cols = [[d[1][p] if p < len(d[1]) else 0.0 for d in self._draws]
                 for p in range(PHASES)]
         return [min(c) for c in cols], [max(c) for c in cols]
 
+    def shed_target(self, meter: list[float], limit: float) -> float:
+        """
+        The most the cars may take, given a reading that is over the limit.
+
+        The same arithmetic the shed branch of `step` uses, exposed so the
+        control loop's independent backstop can reach the same answer without
+        waiting for a step to be due. Read-only: it consults the draw window
+        but does not advance it.
+
+        The anchor is what the cars were drawing when the reading was taken.
+        Subtracting the overshoot from what is currently ALLOWED instead ratchets
+        - the allowance falls, the stale reading still shows the same overshoot,
+        so it is subtracted again, and a car with room to spare is walked down
+        to a pause.
+        """
+        _, high = self._window_bounds()
+        return min(
+            max(0.0, high[p] + (limit - (meter[p] if p < len(meter) else 0.0)))
+            for p in range(PHASES)
+        )
+
     def step(self, now: float, meter: list[float], limit: float,
-             drawn: list[float], ceiling: float,
-             min_current: float) -> list[float]:
+             drawn: list[float], ceiling: float) -> list[float]:
         """
         Move the allowance one step toward the limit. Returns amps per phase.
 
@@ -179,6 +218,7 @@ class Regulator:
         are actually taking; it is used through `draw_window` so that it
         describes the same moment the reading does.
         """
+        self._stepped_at = now
         low, high = self.draw_window(now, drawn)
         for p in range(PHASES):
             reading = meter[p] if p < len(meter) else 0.0
@@ -195,19 +235,20 @@ class Regulator:
                 # through the meter and granted more.
                 nxt = high[p] + error
             else:
-                capacity = low[p] + error
-                nxt = self.allowed[p] + self.RAISE_GAIN * error
-                # Anti-windup. Allowance the cars are not taking must not
-                # accumulate, or the total drifts to the ceiling while a car
-                # declines it and then overshoots when it finally draws. The
-                # floor keeps enough on offer for a car to be able to start at
-                # all, which a strict drawn+slack cap would forbid.
-                nxt = min(nxt, max(low[p] + self.SLACK, min_current))
-                # ...but real capacity outranks that floor. A paused car is not
-                # in the reading, so the error stays positive even with no room
-                # left, and the floor alone would offer 6 A that does not exist.
-                # Below the legal minimum this snaps to a pause, as it should.
-                nxt = min(nxt, capacity)
+                # Approach the room that actually exists, half the distance at
+                # a time. `capacity` is what the house could absorb: the draw
+                # already inside the reading, plus whatever is left under the
+                # limit. Offering up to it means that even if the cars took
+                # every amp on offer, the meter lands at the limit and no
+                # higher - so no separate guard against the allowance running
+                # ahead of what is drawn is needed. A car that declines its
+                # offer simply declines it.
+                #
+                # A paused car is not in the reading, so the error stays
+                # positive even with no room left; capacity is what catches
+                # that, and below the legal minimum it snaps to a pause.
+                nxt = min(self.allowed[p] + self.RAISE_GAIN * error,
+                          low[p] + error)
 
             self.allowed[p] = max(0.0, min(nxt, ceiling))
         return list(self.allowed)

@@ -61,8 +61,26 @@ def test_idle_chargers_are_held_ready_when_nothing_contests_the_current():
     square wave plus a probe cycle before a car plugged in later can start.
     """
     a = allocate([25, 25, 25], [charger("a", wants=False), charger("b", 1, wants=False)])
-    assert set(a.per_charger.values()) == {6}
+    assert set(a.per_charger.values()) == {12}, "25 A split between the two"
     assert "ready" in a.reason
+
+
+def test_a_lone_idle_charger_is_offered_its_full_rating():
+    """
+    A token minimum would mean a car plugged into a quiet house starts at 6 A
+    and has to climb, and the dashboard reads 6 A while 16 A is free.
+    """
+    a = allocate([25, 25, 25], [charger("solo", wants=False)])
+    assert a.per_charger["solo"] == 16
+
+
+def test_standing_offers_serve_fewer_chargers_rather_than_all_below_the_floor():
+    """Same rule as the real split: below 6 A a car must stop, not charge slowly."""
+    idle = [charger(f"g{i}", i, wants=False) for i in range(6)]
+    a = allocate([25, 25, 25], idle)
+    served = [v for v in a.per_charger.values() if v]
+    assert served and all(v >= 6 for v in served)
+    assert sum(a.per_charger.values()) <= 25
 
 
 def test_a_standing_offer_never_comes_out_of_a_waiting_cars_share():
@@ -74,8 +92,9 @@ def test_a_standing_offer_never_comes_out_of_a_waiting_cars_share():
 
 def test_an_idle_charger_is_held_ready_out_of_real_surplus():
     a = allocate([25, 25, 25], [charger("a", cap=10.0), charger("idle", 1, wants=False)])
-    assert a.per_charger["a"] == 10
-    assert a.per_charger["idle"] == 6, "15 A spare is more than the minimum"
+    assert a.per_charger["a"] == 10, "the asking car is served first"
+    assert a.per_charger["idle"] == 15, "and the idle one gets what is left"
+    assert sum(a.per_charger.values()) <= 25
 
 
 def test_a_starved_charger_is_not_handed_a_standing_offer():

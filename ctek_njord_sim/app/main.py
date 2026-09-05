@@ -253,7 +253,6 @@ class Service:
             # What the meter must stay under, and what the cars are taking.
             limit = opts.main_fuse - opts.safety_margin
             ceiling = float(aggregate_ceiling)
-            min_current = float(self.balancer.cfg.min_allowed_current)
 
             # The house baseline is no longer derived at all. Subtracting the
             # cars out of the meter puts what we allow back into what we allow
@@ -261,16 +260,20 @@ class Service:
             # oscillates however carefully it is gated. The meter reading is the
             # quantity that has to stay under the fuse, so it is regulated
             # directly instead - see regulator.py.
-            fresh = self.regulator.note_reading(house_ts) if house_ts else False
+            # Recorded for the cadence estimate only. Whether we may step is a
+            # question of elapsed time, not of the value having moved - see
+            # `Regulator.ready`.
+            if house_ts:
+                self.regulator.note_reading(house_ts)
             settled_since = max(
                 (self._alloc_changed_at.get(c.id, -1e9) for c in bound),
                 default=-1e9,
             )
             ready = self.regulator.ready(now, settled_since, opts.meter_lag)
 
-            if current and fresh and ready:
+            if current and ready:
                 allowed = self.regulator.step(
-                    now, current, limit, total_car, ceiling, min_current)
+                    now, current, limit, total_car, ceiling)
                 self.last_step_at = wall
                 # The one line that explains any setpoint this thing chooses.
                 _LOG.debug(
@@ -282,9 +285,9 @@ class Service:
                     self.regulator.cadence.period,
                 )
             else:
-                # Nothing new to learn from, or the reading in hand predates the
-                # last change. Holding is right either way: correcting against a
-                # reading taken before the change is what started the cycling.
+                # The reading in hand predates the last change, or the last
+                # correction has not had time to show up yet. Correcting against
+                # a reading taken before the change is what started the cycling.
                 allowed = self.regulator.hold()
 
             # Kept only so the dashboard can still show what the house is doing.
@@ -337,10 +340,16 @@ class Service:
             # baseline believes, and the shortfall comes off what is allowed.
             self.over_fuse = 0.0
             if current:
-                over = max(current) - (opts.main_fuse - opts.safety_margin)
+                over = max(current) - limit
                 if over > 0:
                     self.over_fuse = round(over, 1)
-                    cap = max(0.0, min(cap, sum(self.allocation.values()) - over))
+                    # Anchored on what the cars were drawing when the reading
+                    # was taken, not on what they are currently allowed. Taking
+                    # the overshoot off the allowance ratchets: the allowance
+                    # drops, the stale reading still shows the same overshoot,
+                    # and it comes off again - which walked a car with 10 A of
+                    # room down to a pause in two ticks.
+                    cap = min(cap, self.regulator.shed_target(current, limit))
 
             allocation = allocate(
                 decision.headroom or [0.0, 0.0, 0.0],

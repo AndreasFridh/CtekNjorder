@@ -236,17 +236,22 @@ rather than charge slower, so the add-on commands 0 and pauses.
 - **Waits for the meter, and works out for itself how long that is.** A
   reading that predates the last change describes a house that no longer
   exists, so no correction is made until a full reporting period has passed
-  since then. That period is measured from how often readings arrive, and shown
-  on the dashboard as **Meter rate**; nothing needs configuring. A ten-second
+  since then, and since the last correction. That period is measured from how
+  often readings arrive, and shown on the dashboard as **Meter rate**; nothing
+  needs configuring. It is a matter of elapsed time, not of the reading having
+  changed — Home Assistant sends nothing when a value repeats, and a quiet
+  house must not stop the allowance rising. A ten-second
   floor applies, because arrivals only set a lower bound — a meter can publish
   every two seconds and still describe the house ten seconds ago.
 - **Ignores its own wake.** For a few seconds after each change the car is
   still ramping and the meter still reports its previous draw. The add-on
   holds instead of throttling against that transient. Pausing is exempt, so a
   real overload is never delayed.
-- **Cannot bank current a car is not taking.** The allowance is never allowed
-  to run far above what the cars actually draw, so it cannot drift up to the
-  ceiling while a car declines it and then overshoot the moment it starts.
+- **Offers the room that exists.** The allowance is capped at what the house
+  could absorb — the car draw already inside the meter reading, plus whatever
+  is left under the limit — so a car taking every amp offered still lands at or
+  below the fuse. A quiet house therefore offers the charger's full rating, not
+  a cautious fraction of it.
 - **Compares like with like.** The car draw inside a reading is as old as the
   reading. Each direction therefore uses the end of the recent draw range that
   cannot cost anything: the lowest when granting, so current is never handed
