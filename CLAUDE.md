@@ -86,24 +86,21 @@ python tools/replay.py captures/<file>.jsonl --main-fuse 25
 against what the actual Nanogrid Air did. Disagreements are expected only around
 cold starts, on either side. Any steady-state divergence is a regression.
 
-**Note what that does and does not cover.** `compute()` is the Nanogrid Air's
-own model, kept as the reference the replay compares against. The add-on itself
-no longer decides that way: it regulates the meter reading directly through
-`app/regulator.py` and enters the balancer at `from_headroom()`. So a green
-replay says the reference model still matches real hardware — it does **not**
-say the add-on's own control path works. Only the offline rig exercises that.
+**A green replay does not mean the add-on works.** `compute()` is the Nanogrid
+Air's model, kept only as the reference the replay compares against. The add-on
+regulates the meter reading itself through `app/regulator.py` and enters the
+balancer at `from_headroom()`, which the replay never touches.
 
-For behaviour that a capture cannot show — overload, pause, recovery, a meter
-that lags — use the offline rig (`tools/mock_charger.py` + `tools/mock_hass.py`
-`--meter-lag 10`), which lets the add-on run with `dry_run: false` against
-nothing real. Run it with `log_level: debug` and read the `regulator:` lines:
-they show the reading, the car draw and the resulting allowance, which is the
-only practical way to see why a setpoint moved.
+For behaviour a capture cannot show - overload, pause, recovery, a lagging
+meter - use the offline rig (`tools/mock_charger.py` + `tools/mock_hass.py
+--meter-lag 10`), which runs the add-on with `dry_run: false` against nothing
+real. Set `log_level: debug` and read the `regulator:` lines: they show the
+reading, the car draw and the resulting allowance, which is the only practical
+way to see why a setpoint moved.
 
-Every control-loop bug of consequence so far — the 0.1.0 oscillation, the
-start/stop cycling that faulted a real car, and four separate faults in 0.13.0
-— was invisible to both the unit tests and the replay, and showed up only on the
-rig, because they all need the car to react to our own commands.
+Every control-loop bug of consequence so far was invisible to both the unit
+tests and the replay, and appeared only on the rig - they all need the car to
+react to our own commands.
 
 ## Style
 

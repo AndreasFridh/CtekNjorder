@@ -212,18 +212,11 @@ shedding:  allowed = car_current + error      immediate, and exact
 setpoint = the lowest allowance across the phases the car uses
 ```
 
-`house_current` is the meter reading exactly as it comes, cars included. The
+`house_current` is the meter reading exactly as it comes, cars included — the
 car is deliberately *not* subtracted out of it. Subtracting gives an allowance
-that contains the previous allowance, which comes back through the meter a few
-seconds later and sets the next one — a loop with a gain of one and a delay of
-one meter reading, which oscillates by construction rather than by mistake.
-Correcting the reading itself leaves the response a choice, and the two
-directions are chosen differently. Raising moves half the distance, so it
-converges instead of ringing. Shedding goes straight to the answer, measured
-against what the cars are drawing at the same instant the meter was read — the
-safe direction is never slowed, and anchoring it on the draw rather than on the
-allowance stops a lagging meter walking the setpoint down a few amps at a
-time.
+containing the previous allowance, which returns through the meter and sets the
+next one: a loop with a gain of one, which oscillates by construction rather
+than by mistake. Correcting the reading itself makes the response a choice.
 
 The result is snapped to what the charger will accept: **0 A, or 6–16 A**.
 There is no value between 1 and 5 A — below the 6 A floor an EV must stop
@@ -238,14 +231,10 @@ rather than charge slower, so the add-on commands 0 and pauses.
 - **Waits for the meter, and works out for itself how long that is.** A
   reading that predates the last change describes a house that no longer
   exists, so no correction is made until a full reporting period has passed
-  since then. That period is measured from how often readings actually arrive,
-  because meters differ. Nothing needs configuring. The measured rate is shown
-  on the dashboard as **Meter rate**.
-
-  Arrivals only ever set a lower bound on it: a meter can publish every two
-  seconds and still describe the house as it was ten seconds ago. A ten-second
-  floor is therefore applied — the usual P1 period, and faster than any meter
-  of this kind reflects a change.
+  since then. That period is measured from how often readings arrive, and shown
+  on the dashboard as **Meter rate**; nothing needs configuring. A ten-second
+  floor applies, because arrivals only set a lower bound — a meter can publish
+  every two seconds and still describe the house ten seconds ago.
 - **Ignores its own wake.** For a few seconds after each change the car is
   still ramping and the meter still reports its previous draw. The add-on
   holds instead of throttling against that transient. Pausing is exempt, so a
@@ -253,18 +242,15 @@ rather than charge slower, so the add-on commands 0 and pauses.
 - **Cannot bank current a car is not taking.** The allowance is never allowed
   to run far above what the cars actually draw, so it cannot drift up to the
   ceiling while a car declines it and then overshoot the moment it starts.
-- **Compares like with like.** A reading describes the house as it was up to a
-  reporting period ago, so the car draw inside it is that old too, and what the
-  car is taking this second may be nothing like it. Rather than guess, each
-  direction uses the end of the recent draw range that cannot cost anything:
-  the lowest when granting more, so current is never handed out against amps
-  the meter has not seen; the highest when cutting back, so a car is not
-  charged twice for a reduction it has already made.
-- **Never offers room that is not there.** A paused car is not in the meter
-  reading, so the reading sits under the limit even when the house has taken
-  nearly all of it. What may be offered is capped by the room actually
-  available, not just by the 6 A floor a car needs to start — below that floor
-  the answer is to stay paused.
+- **Compares like with like.** The car draw inside a reading is as old as the
+  reading. Each direction therefore uses the end of the recent draw range that
+  cannot cost anything: the lowest when granting, so current is never handed
+  out against amps the meter has not seen, and the highest when cutting, so a
+  car is not charged twice for a reduction it has already made.
+- **Never offers room that is not there.** A paused car is absent from the
+  reading, so the reading sits under the limit however loaded the house is.
+  What may be offered is capped by the room actually available, not just by the
+  6 A a car needs to start — below that, the answer is to stay paused.
 - **Falls back when blind.** If the current entities go stale or unavailable
   for longer than `stale_timeout`, it drops to `fallback_current` rather than
   guessing. A charger that stops reporting is treated the same way: it stops

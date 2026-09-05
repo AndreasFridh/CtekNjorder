@@ -37,7 +37,7 @@ rather than charge slower.
 
 **`ctek/ng-v2/client/{CB}/1/update`** — every **1.0 s**
 ```json
-{"State": 2, "EvUsesPhase": [1,1,1], "MaxAllowedCurrent": 16, "Current": [15.8,15.7,16.1]}
+{"State": 2, "EvUsesPhase": [1,1,1], "MaxAllowedCurrent": 16, "Current": [16.0,16.0,16.0]}
 ```
 `Current` is the EV's actual per-phase draw. `MaxAllowedCurrent` echoes the
 setpoint the charger is currently honouring — use it to confirm our commands
@@ -86,9 +86,11 @@ Bare integer. The meter-data cadence in seconds, and it matches the observed
 
 **`ctek/client/{CB}/sma/meterdata`** and **`ctek/nga/{NGA}/meterdata`** — every **10 s**
 ```json
-{"activePowerIn": 12.918, "activePowerOut": 0.0, "current": [18.6,19.8,19.5], "voltage": [230.9,232.5,231.8]}
+{"activePowerIn": 13.8, "activePowerOut": 0.0, "current": [20.0,20.0,20.0], "voltage": [230.0,230.0,230.0]}
 ```
 Whole-house totals at the grid connection point, **including** the car.
+Values in the examples throughout are round illustrative figures, not readings
+lifted from a capture; the field names, units and types are what was observed.
 Power in **kW** — note the charger's own `info.power` is in **W**.
 `activePowerOut` is export (solar); it stayed `0.0` throughout.
 
@@ -138,18 +140,17 @@ allowed[p]  = main_fuse - baseline[p] - safety_margin
 setpoint    = clamp(min(allowed over phases the EV uses), 0, min(FuseRating, user_max))
 ```
 
-From the capture: meter `[18.6, 19.8, 19.5]` minus car `[15.8, 15.7, 16.1]`
-gives a house baseline of roughly `[2.8, 4.1, 3.4]` A.
+So a meter reading `[20.0, 20.0, 20.0]` with the car taking `[16.0, 16.0, 16.0]`
+leaves a house baseline of `[4.0, 4.0, 4.0]` A.
 
 `setpoint` must then snap to the legal set: **0, or 6–16 A**. There is no valid
 value between 1 and 5 — below `MinAllowedCurrent` the only option is to pause.
 
 **This describes the Nanogrid Air, not this add-on.** The subtraction above is
-a feedback loop with a gain of one and a delay of one meter reading, and it
-oscillates on any meter slower than the captures' — which is presumably why the
-adapter also waits three readings before raising. This add-on used to copy it
-and now does not; see `app/regulator.py`. The snapping rule and the legal value
-set on the line above are the charger's, and still apply.
+a feedback loop with a gain of one, and it oscillates on any meter slower than
+the captures' — presumably why the adapter waits three readings before raising.
+This add-on no longer copies it; see `app/regulator.py`. The snapping rule
+above is the charger's, and still applies.
 
 ### Phase rotation
 

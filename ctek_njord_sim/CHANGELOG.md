@@ -1,85 +1,54 @@
 # Changelog
 
+## 0.13.1
+
+No behaviour change.
+
+- Cut the commentary in `app/regulator.py`, the 0.13.0 changelog entry and the
+  docs down to what is actually load-bearing.
+- Removed the maintainer's email address from `repository.yaml`, and replaced
+  the last device-specific serial and the verbatim meter readings in
+  `PROTOCOL.md` with illustrative values.
+
 ## 0.13.0
 
-**Update if the allowed current cycles up and down.** This replaces the way the
+**Update if the allowed current cycles up and down.** This replaces how the
 charging current is worked out, and removes the tuning that used to be needed
 to stop it swinging.
 
 - **The car is no longer subtracted out of the meter reading.** That
-  subtraction was the cause, not a detail of it. Working out the house load as
-  `meter - car` and then allowing whatever is left puts the previous allowance
-  straight back into the next one, delayed by however long the meter takes to
-  report - a feedback loop with a gain of exactly one, which oscillates by
-  construction. Every previous fix gated that loop without changing its gain,
-  which is why the cycling kept returning on slower meters.
+  subtraction was the cause, not a detail of it: working out the house load as
+  `meter - car` and allowing what is left puts the previous allowance back into
+  the next one, delayed by however long the meter takes to report - a loop with
+  a gain of one, which oscillates by construction. Earlier fixes gated that
+  loop without changing its gain, which is why cycling returned on slower
+  meters.
 
-  The meter reading is now corrected directly: it is the number that has to
-  stay under the fuse, so the response becomes a choice. Raising moves half the
-  distance, so the loop converges; shedding goes straight to the answer,
-  because the safe direction is never slowed.
+  The meter reading is now corrected directly. Raising moves half the distance,
+  so it converges; shedding goes straight to the answer, because the safe
+  direction is never slowed.
 
-- **The meter's reporting rate is measured, not configured.** Corrections wait
-  until a reading has arrived that postdates the last change, so nothing is
-  ever decided against a reading from before it. How long that takes is learned
-  from how often readings actually arrive, so a slow meter is not outrun. It
-  shows on the dashboard as **Meter rate**.
+- **The meter's rate is measured, not configured**, and shown on the dashboard
+  as **Meter rate**. Nothing is decided until a reading has arrived that
+  postdates the last change. A ten-second floor applies: arrivals say how often
+  a meter publishes, not how stale its value is, and some publish every two
+  seconds while still describing the house ten seconds ago.
 
-  That measurement is a lower bound and is treated as one. A meter can publish
-  every two seconds and still describe the house as it was ten seconds ago, and
-  several do; pacing on the publish rate alone then makes five corrections
-  before the first one is visible, each compounding the last. Nothing in the
-  arrivals can reveal the difference, so a ten-second floor is applied - the
-  usual P1 period, and faster than any meter of this kind reflects a change.
+- **`meter_lag` now defaults to `0`, meaning automatic**, and acts as a floor
+  on the measured rate rather than replacing it. Existing settings still work;
+  most installations should set it back to 0.
 
-- **`meter_lag` now defaults to `0`, meaning automatic.** It is a floor on the
-  measured rate rather than the rate itself, for meters that report
-  irregularly. Existing settings still work and still take effect; almost
-  everyone should set it back to 0.
-
-- **Shedding lands on the right answer instead of creeping toward it.** When
-  the meter goes over, the reduction is measured from what the cars are
-  actually drawing at that instant rather than from what they were allowed.
-  Those two differ whenever a car is ramping or is not taking its full offer,
-  and measuring from the allowance cut too far, then cut too far again on the
-  next reading - walking a house that had 10 A to spare down to a car held at
-  6 A. Raising stays damped and gradual; only shedding is exact and immediate.
-
-- **A car can no longer ratchet its own allowance, in either direction.** The
-  reading in hand describes the house as it was up to a reporting period ago,
-  so the car draw inside it is that old too, and what the car is taking this
-  second may be nothing like it. Comparing the two mixes different moments, and
-  the mix feeds itself both ways: a car ramping up is granted current the meter
-  has not seen, takes it, and is granted more, climbing until the reading
-  catches up and forces a hard cut to zero; a car winding down is charged twice
-  for the same amps, which lowers it again, walking a car that could have had
-  10 A down to a pause.
-
-  Each direction is now paired with the end of the recent draw range that
-  cannot cost anything - the lowest when granting, the highest when cutting -
-  so both err toward less current.
+- **A car can no longer ratchet its own allowance**, in either direction. The
+  reading is now weighed against a car draw of matching age, taking the lowest
+  recent draw when granting and the highest when cutting, so both err toward
+  less current. Mixing a stale reading with a live draw let a ramping car climb
+  to the ceiling unchecked, and a car winding down be walked to a needless
+  pause.
 
 - **A paused car is no longer offered room that is not there.** A car drawing
-  nothing is not in the meter reading, so the reading sits under the limit and
-  nothing about it looks like an overload - and the 6 A that must stay on offer
-  for a car to be able to start at all was being offered regardless of whether
-  6 A existed. With the house at 20.5 A of a 24 A limit that would have taken
-  the meter to 26.5 A. What may be offered is now capped by the room actually
-  available, which below the legal minimum correctly means staying paused.
-
-Problems found on the offline rig while testing the above, and fixed before
-release:
-
-- **Charging no longer sticks at 6 A.** The new allowance was being clamped to
-  the setpoint currently commanded, but the balancer deliberately holds that
-  down while waiting out `raise_delay`. The pending raise was thrown away on
-  every tick that took no step, the delay restarted, and charging stayed at the
-  cold-start minimum with the fuse barely loaded. The allowance is now bounded
-  by what the cars actually draw, which is measured, rather than by what we
-  ourselves last commanded.
-- Removed the baseline smoothing filter, which had nothing left to smooth.
-- Added a debug-level log line showing what the regulator saw and what it
-  decided, so a meter behaving oddly can be diagnosed from the add-on log.
+  nothing is absent from the meter reading, so the reading sits under the limit
+  however loaded the house is. What may be offered is now capped by the room
+  actually available, not just by the 6 A a car needs to start.
 
 ## 0.12.0
 

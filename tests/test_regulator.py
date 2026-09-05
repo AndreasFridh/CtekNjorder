@@ -148,11 +148,9 @@ def test_being_over_the_limit_is_corrected_at_once():
 
 def test_shedding_measures_from_the_draw_not_from_the_allowance():
     """
-    While a car ramps - or simply declines its offer - the allowance sits above
-    what is actually being taken. Subtracting the overshoot from the allowance
-    then cuts past the right answer, and the next reading cuts past it again,
-    walking the setpoint down several amps at a time. That is what turned a
-    house with 10 A to spare into a car held at 6 A.
+    While a car ramps, or declines its offer, the allowance sits above what is
+    actually taken - so cutting from the allowance overshoots, and the next
+    reading overshoots again, walking the setpoint down several amps at a time.
     """
     r = Regulator()
     clk = Clock(r)
@@ -218,13 +216,10 @@ def test_a_car_that_has_not_started_is_still_offered_enough_to_start():
 
 def test_a_car_winding_down_cannot_ratchet_its_own_allowance_to_zero():
     """
-    The mirror of the ratchet above, and the reason the two directions read
-    opposite ends of the draw window.
-
-    While the car comes down, the reading still contains its old higher draw.
-    Cutting relative to the draw the car has ALREADY reached charges it twice
-    for the same amps, and each cut lowers the draw again - walking a car that
-    could have had 10 A all the way to a pause.
+    The mirror of the ratchet above, and why the two directions read opposite
+    ends of the window. While a car comes down the reading still holds its old
+    higher draw, so cutting against the draw it has already reached charges it
+    twice for the same amps - and each cut lowers the draw again.
     """
     r = Regulator()
     clk = Clock(r, step_seconds=2.0)
@@ -244,12 +239,9 @@ def test_a_car_winding_down_cannot_ratchet_its_own_allowance_to_zero():
 
 def test_a_ramping_car_cannot_ratchet_its_own_allowance_up():
     """
-    Observed on the rig with a meter ten seconds behind: the reading still
-    described a house drawing 6 A while the car had already ramped to 8, so the
-    allowance was granted from a draw the meter had not seen. The car took it,
-    the allowance grew again, and it climbed 9 - 11 - 13 without the meter ever
-    getting a say, until the reading finally caught up and forced a hard cut to
-    zero. Pairing the stale reading with an equally stale draw stops it.
+    A stale reading paired with a live draw grants current the meter has not
+    seen; the car takes it and is granted more, climbing without the meter
+    getting a say until it catches up and forces a hard cut to zero.
     """
     r = Regulator()
     clk = Clock(r, step_seconds=2.0)     # stepping faster than the meter reports
@@ -267,12 +259,10 @@ def test_a_ramping_car_cannot_ratchet_its_own_allowance_up():
 
 def test_a_paused_car_is_not_offered_room_that_does_not_exist():
     """
-    The dangerous case, seen on the rig. A paused car draws nothing, so the
-    meter reading does not contain it and the error is positive even when the
-    house has left almost no room. The start floor alone then offered 6 A into
-    3.5 A of capacity, which would have taken a 24 A limit to 26.5 A - and it
-    sat there for the best part of a minute, because nothing about a positive
-    error looks like an overload.
+    A paused car draws nothing, so it is absent from the reading and the error
+    stays positive however loaded the house is. Nothing about a positive error
+    looks like an overload, so the start floor alone would offer 6 A into
+    3.5 A of capacity.
     """
     r = Regulator()
     clk = Clock(r)
@@ -371,14 +361,10 @@ def test_a_step_change_in_house_load_is_absorbed_without_ringing():
 
 def test_holding_does_not_forget_a_raise_the_balancer_is_waiting_on():
     """
-    The regression that made the first version of this useless.
-
-    The balancer holds its setpoint down while it waits out `raise_delay`. If
-    the allowance is clamped to that held command, then on any tick where no
-    step is taken `hold()` returns the clamped value, the balancer sees a target
-    equal to its current setpoint, cancels the pending raise, and restarts the
-    timer - which never expires. Charging sits at the cold-start minimum for
-    ever with the fuse barely loaded.
+    The balancer holds its setpoint down while it waits out `raise_delay`, so
+    an allowance clamped to that held command loses the pending raise on every
+    tick that takes no step - the target falls back to the current setpoint,
+    the timer restarts, and charging never leaves the cold-start minimum.
     """
     r = Regulator()
     clk = Clock(r)

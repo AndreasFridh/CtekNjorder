@@ -1,62 +1,41 @@
 """
 Deciding how much current EV charging may take, from the meter alone.
 
-The previous approach subtracted the cars out of the meter reading to recover
-the house load, then handed back whatever was left:
+The obvious approach is to recover the house load by subtracting the cars out
+of the meter reading, then hand back whatever is left:
 
     headroom = fuse - margin - (meter - car)
              = fuse - margin - meter + car
 
-That trailing `+ car` is a feedback path with a gain of exactly one. What we
-allow becomes what the car draws, which comes back through the meter a few
-seconds later and sets what we allow next. A loop with unity gain and a
-transport delay oscillates; that is not a defect that can be found and removed,
-it is what the equation does. Gating it - refusing to sample while a car ramps,
-waiting a fixed lag - makes the loop run less often without changing its gain,
-which is why the cycling kept coming back on a slower meter.
+That trailing `+ car` is a feedback path with a gain of exactly one: what we
+allow becomes what the car draws, which returns through the meter and sets what
+we allow next. A unity-gain loop with a transport delay oscillates - not as a
+defect to be found and removed, but as what the equation does. Gating it makes
+it run less often without changing its gain, which is why the cycling here
+survived several rounds of that.
 
-So the car is not subtracted at all here. The meter reading is the quantity
-that must stay under the fuse, so it is regulated directly:
+So the car is not subtracted. The meter reading is the quantity that must stay
+under the fuse, so it is corrected directly and the response becomes a choice:
 
     error = (fuse - margin) - meter
-    allowed += gain * error
 
-Now the response is ours to choose, and the two directions are chosen
-differently. Raising moves half the error, so the loop converges geometrically
-instead of ringing. Shedding goes straight to the answer, measured from what
-the cars are actually drawing at the same instant the meter was read - immediate
-because the safe direction must never be slow, and anchored on draw rather than
-on the allowance so that a lagging meter cannot walk the setpoint downward a
-few amps at a time.
+Raising moves half the error, so the loop converges instead of ringing.
+Shedding goes straight to the answer, because the safe direction is never
+slowed.
 
-Two things make this work with a slow meter, and both are automatic:
+The reading is old, though, and two consequences of that are handled here:
 
-* A step is only taken on a reading that postdates the last change by at least
-  one of the meter's own reporting periods, so every correction is computed
-  from a reading that actually reflects the previous one. The period is
-  measured rather than configured, because it differs per household.
-
-* An allowance cannot be banked. It may exceed what the cars are really taking
-  by a small margin and no more, so the total cannot creep up to the ceiling
-  while a car declines it and then overshoot when it finally draws.
-
-  That bound is deliberately measured against what the cars DRAW, never against
-  what they were commanded. Clamping to the command instead looks equivalent and
-  deadlocks: the balancer holds the setpoint down while it waits out its raise
-  delay, so clamping to it throws away the pending raise every tick, the target
-  falls back to the current setpoint, the delay restarts, and the allowance
-  never rises off the cold-start minimum. Draw is physical; the command is our
-  own opinion, and an integrator must not be reset by its own output.
+* Nothing is decided until a reading has arrived that postdates the last
+  change - see `settling_period`.
+* The reading is weighed against a car draw of matching age - see
+  `draw_window`.
 
 Pure and side-effect free.
 """
 from __future__ import annotations
 
-import logging
 import statistics
 from collections import deque
-
-_LOG = logging.getLogger(__name__)
 
 PHASES = 3
 
@@ -113,19 +92,10 @@ class Regulator:
     RAISE_GAIN = 0.5      # half the error, so the loop converges rather than rings
     SLACK = 3.0           # amps of allowance permitted above what is drawn
 
-    # How long to assume a reading takes to reflect a change, at minimum.
-    #
-    # `MeterCadence` measures how often readings ARRIVE, which is not the same
-    # as how old they are - a meter can publish every two seconds and still be
-    # reporting the house as it was ten seconds ago, and several do. Pacing on
-    # the arrival rate alone then steps five times before the first correction
-    # is visible, and each step compounds the last.
-    #
-    # There is no way to measure the difference from arrivals alone, so it is
-    # floored instead. Ten seconds is the usual P1 period and no meter of this
-    # kind reflects a change faster. Being slower than necessary only makes
-    # charging ramp up a little more gently; being faster than the truth is
-    # what makes it cycle.
+    # Minimum age to assume of a reading. Arrivals say how often the meter
+    # publishes, not how stale its value is, and nothing in them can reveal the
+    # difference - so it is floored at the usual P1 period. Erring slow only
+    # ramps charging up more gently; erring fast is what makes it cycle.
     LAG_FLOOR = 10.0
 
     def __init__(self):
@@ -172,26 +142,19 @@ class Regulator:
         """
         The lowest and highest car draw over the last reporting period.
 
-        The reading in hand describes the house as it was up to a period ago,
-        so the car draw inside it is that old too, and what the car is taking
-        this second may be nothing like it. Rather than guess which moment the
-        reading belongs to, each direction is paired with the end of the window
-        that cannot cost us anything:
+        The reading describes the house as it was up to a period ago, so the
+        car draw inside it is that old too and may be nothing like what the car
+        is taking now. Rather than guess which moment it belongs to, each
+        direction uses the end of the range that cannot cost anything:
 
-        * Granting more uses the LOWEST recent draw, so current is never handed
-          out against amps the meter has not seen yet. Without this a ramping
-          car ratchets its own allowance - granted from a draw the meter is
-          blind to, it takes it, and is granted more, climbing until the reading
-          catches up and forces a hard cut to zero.
-
-        * Cutting back uses the HIGHEST recent draw, because that is what the
-          reading still contains. Cutting relative to a draw the car has already
-          come down to charges it twice for the same amps, and the second cut
-          lowers the draw again - a downward ratchet that walks a car with 10 A
-          available all the way to a pause.
-
-        Both ends therefore err toward less current, which is the direction to
-        be wrong in.
+        * Granting uses the LOWEST recent draw, so current is never handed out
+          against amps the meter has not seen. Otherwise a ramping car ratchets
+          its own allowance up until the reading catches up and forces a hard
+          cut to zero.
+        * Cutting uses the HIGHEST, because that is what the reading still
+          contains. Cutting against a draw the car has already come down to
+          charges it twice for the same amps, and lowers the draw again - the
+          same ratchet downward, ending in a needless pause.
         """
         self._draws.append((now, list(drawn)))
         cutoff = now - self.settling_period()
@@ -216,25 +179,14 @@ class Regulator:
             reading = meter[p] if p < len(meter) else 0.0
             error = limit - reading
 
-            # What the cars could take without putting the meter over. The
-            # draw term matters because the reading already contains it: the
-            # spare capacity is what is left over PLUS what the cars are
-            # already accounted for in that reading.
             if error < 0:
-                # Over the limit. Go straight to the answer - the safe
-                # direction is never approached gradually - measured against
-                # the highest recent draw, which is what the reading still
-                # contains. Anchoring on the allowance instead over-sheds
-                # whenever the allowance sits above the draw, and each cut then
-                # over-sheds again: a house needing 10 A of headroom walked all
-                # the way down to a pause.
+                # Over the limit: straight to the answer, never gradually.
                 #
-                # This is the same arithmetic as the old `limit - house` and it
-                # does NOT bring back the oscillation, because it is only ever
-                # allowed to LOWER the allowance. The ringing came from that
-                # formula raising as well: what it granted became draw, which
-                # came back through the meter and granted more. Raising is
-                # damped and gradual below; shedding is exact and immediate.
+                # This is the same arithmetic as the old `limit - house`, and it
+                # does not bring back the oscillation because it may only ever
+                # LOWER the allowance. The ringing came from that formula
+                # raising too - what it granted became draw, which came back
+                # through the meter and granted more.
                 nxt = high[p] + error
             else:
                 capacity = low[p] + error
@@ -245,12 +197,10 @@ class Regulator:
                 # floor keeps enough on offer for a car to be able to start at
                 # all, which a strict drawn+slack cap would forbid.
                 nxt = min(nxt, max(low[p] + self.SLACK, min_current))
-                # ...but capacity outranks that floor. A paused car sees a
-                # meter reading that does not include it, so the error is
-                # positive even when there is no room: with the house at 20.5 A
-                # of a 24 A limit the floor alone offered 6 A, which would have
-                # taken the meter to 26.5 A. Below the legal minimum this snaps
-                # to a pause further up, which is the right answer.
+                # ...but real capacity outranks that floor. A paused car is not
+                # in the reading, so the error stays positive even with no room
+                # left, and the floor alone would offer 6 A that does not exist.
+                # Below the legal minimum this snaps to a pause, as it should.
                 nxt = min(nxt, capacity)
 
             self.allowed[p] = max(0.0, min(nxt, ceiling))
