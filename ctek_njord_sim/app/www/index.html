@@ -464,6 +464,15 @@ function renderChargers(s) {
     if (c.power != null) rows.push(row('Power', (c.power / 1000).toFixed(2) + ' kW'));
     if (c.energy != null) rows.push(row('Lifetime', (c.energy / 1000).toFixed(0) + ' kWh'));
     if (capped) rows.push(row('Car limit', '~' + c.cap.toFixed(0) + ' A'));
+    // The charger's own limits, from its retained configuration. These
+    // OVERRIDE the Max charge setting, so a charger reporting a low fuse
+    // rating quietly caps everything - and used to do so invisibly.
+    if (c.fuse_rating != null) rows.push(row('Charger rating', c.fuse_rating + ' A'));
+    if (c.min_allowed_current != null)
+      rows.push(row('Charger minimum', c.min_allowed_current + ' A'));
+    if (LAST && LAST.meter && LAST.meter.period != null)
+      rows.push(row('Meter rate', LAST.meter.period + ' s' +
+                    (LAST.meter.measured ? '' : ' (assumed)')));
 
     const L = c.link || {};
     const link = L.samples
@@ -488,31 +497,6 @@ function renderChargers(s) {
         '<code>' + esc(c.host) + '</code></div>' +
     '</div>';
   }).join('') + '</div>';
-}
-
-function renderStats(s) {
-  // Only State 2 has ever been observed on a real charger (see PROTOCOL.md).
-  // Naming the others would be a guess presented as fact, so show the number.
-  const c = s.charger;
-  const cells = [
-    ['State', c.state === null ? '–' : (c.state === 2 ? 'Charging' : 'State ' + c.state)],
-    ['Charger reports', c.max_allowed_current === null ? '–' : c.max_allowed_current + ' A'],
-    ['Power', c.power === null ? '–' : (c.power / 1000).toFixed(2) + ' kW'],
-    ['Energy', c.energy === null ? '–' : (c.energy / 1000).toFixed(1) + ' kWh'],
-
-    ['Meter age', s.house.age === null ? '–' : s.house.age + ' s'],
-    // How often the meter actually reports. Everything about how fast current
-    // can be adjusted follows from this, and it used to be invisible.
-    ['Meter rate', !s.meter ? '–' : s.meter.period + ' s' +
-      (s.meter.measured ? ' (measured)' : ' (assumed)')],
-    ['Charger serial', esc(c.serial) || '–', true],
-  ];
-  // `v` is already escaped where it came from outside; `k` is ours.
-  // The serial is long and monospaced; give it its own full-width row rather
-  // than letting the auto-fit grid squeeze it into a 140px column.
-  $('#stats').innerHTML = cells.map(([k, v, wide]) =>
-    `<div class="stat${wide ? ' wide' : ''}"><div class="k">${k}</div>` +
-    `<div class="v">${v}</div></div>`).join('');
 }
 
 /* ---------- quick limits ---------- */

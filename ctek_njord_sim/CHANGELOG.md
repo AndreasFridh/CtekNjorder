@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.15.2
+
+Diagnostics, after a report of charging still capped at 6 A on a free grid.
+
+- **Each charger card now shows the charger's own fuse rating and minimum.**
+  These come from its retained configuration and **override** the Max charge
+  setting, so a charger reporting a low rating caps everything - and there was
+  no way to see that. If Charger rating reads 6 A, that is the cap, not the
+  balancing.
+- **The measured meter rate is shown too.**
+- Removed a dead `renderStats` function. Nothing had called it since the move
+  to per-charger cards, so every diagnostic added to it - the meter cadence
+  included - was being written to an element that does not exist.
+
 ## 0.15.1
 
 - **The running version is shown in the web UI footer.** There was no way to
