@@ -54,10 +54,51 @@ def test_an_idle_charger_is_given_nothing():
     assert a.per_charger["a"] == 16, "the whole lot should go to the active car"
 
 
-def test_all_idle_means_all_zero():
+def test_idle_chargers_are_held_ready_when_nothing_contests_the_current():
+    """
+    Withdrawing from an empty charger exists to free current for a car that
+    wants it. With no car asking, withdrawing frees nothing and costs a visible
+    square wave plus a probe cycle before a car plugged in later can start.
+    """
     a = allocate([25, 25, 25], [charger("a", wants=False), charger("b", 1, wants=False)])
-    assert set(a.per_charger.values()) == {0}
-    assert "no charger" in a.reason
+    assert set(a.per_charger.values()) == {6}
+    assert "ready" in a.reason
+
+
+def test_a_standing_offer_never_comes_out_of_a_waiting_cars_share():
+    """Only ever paid out of the surplus after every asking car is served."""
+    a = allocate([20, 20, 20], [charger("a"), charger("idle", 1, wants=False)])
+    assert a.per_charger["a"] == 16, "the asking car is served first"
+    assert a.per_charger["idle"] == 0, "4 A left is below the 6 A minimum"
+
+
+def test_an_idle_charger_is_held_ready_out_of_real_surplus():
+    a = allocate([25, 25, 25], [charger("a", cap=10.0), charger("idle", 1, wants=False)])
+    assert a.per_charger["a"] == 10
+    assert a.per_charger["idle"] == 6, "15 A spare is more than the minimum"
+
+
+def test_a_starved_charger_is_not_handed_a_standing_offer():
+    """
+    A car that asked and could not be served is starved, not idle. Giving it
+    the minimum anyway would hand out current the allocator just decided was
+    not there.
+    """
+    a = allocate([7, 7, 7], [charger("a"), charger("b", 1)],
+                 total_cap=7.0)
+    assert sum(a.per_charger.values()) <= 7
+
+
+def test_a_standing_offer_yields_to_the_charge_enable_gate():
+    """Withheld means withheld; a standing offer must not sneak past it."""
+    a = allocate([25, 25, 25], [charger("idle", wants=False)], total_cap=0.0)
+    assert a.per_charger["idle"] == 0
+
+
+def test_a_standing_offer_respects_the_phase_it_would_load():
+    """Surplus on one phase is no reason to load a phase that has none."""
+    a = allocate([25, 2, 25], [charger("idle", wants=False)])
+    assert a.per_charger["idle"] == 0
 
 
 # ---------- cars that cannot use their share ----------
@@ -266,6 +307,42 @@ def test_a_car_settled_just_below_its_allowance_is_still_read_as_limited():
     cap = t.cap_for(1000.0, "d", 8, 7.0, 16)
     assert cap < 16.0, "a car pinned at 7 A must not look like it wants 16"
     assert cap == pytest.approx(8.0)
+
+
+def test_our_own_pause_is_not_mistaken_for_a_car_arriving():
+    """
+    Regression, seen on real hardware as a square wave on an empty charger.
+
+    Commanding 0 A moves an EVSE into a suspended state and commanding 6 A
+    moves it back, so our own decisions surface here as State changes. Reading
+    them as news cleared the empty conclusion, re-offered current, and the
+    charger toggled between nothing and the minimum for ever - with a period of
+    exactly IDLE_AFTER + restart_hold.
+    """
+    t = DemandTracker()
+    t.update(0.0, "a", setpoint=6, drawn=0.0)
+    idle = t.IDLE_AFTER + 1
+    assert not t.wants_current(idle, "a", state=1, drawn=0.0), "offered and untouched"
+
+    # We pause it, and the charger's State changes because we did that.
+    t.update(idle, "a", setpoint=0, drawn=0.0)
+    assert not t.wants_current(idle + 1, "a", state=4, drawn=0.0), (
+        "our own pause must not read as a car arriving"
+    )
+
+
+def test_a_state_change_well_after_our_command_is_still_believed():
+    """The heuristic must survive the fix - a real plug-in still counts."""
+    t = DemandTracker()
+    t.update(0.0, "a", setpoint=6, drawn=0.0)
+    idle = t.IDLE_AFTER + 1
+    assert not t.wants_current(idle, "a", state=1, drawn=0.0)
+    t.update(idle, "a", setpoint=0, drawn=0.0)
+
+    later = idle + t.STATE_SETTLE + 1
+    assert t.wants_current(later, "a", state=2, drawn=0.0), (
+        "a change long after we last commanded anything is real news"
+    )
 
 
 def test_the_surplus_actually_reaches_the_other_car():

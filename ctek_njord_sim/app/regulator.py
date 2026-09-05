@@ -100,6 +100,11 @@ class Regulator:
 
     def __init__(self):
         self.allowed: list[float] = [0.0] * PHASES
+        # What the house could actually spare, as opposed to what is currently
+        # on offer. The two differ whenever a car is taking less than the house
+        # could support, which is most of the time - and it is the spare, not
+        # the offer, that answers "how much could I charge at right now".
+        self.spare: list[float] = [0.0] * PHASES
         self.cadence = MeterCadence()
         self._last_reading: float | None = None
         self._draws: deque[tuple[float, list[float]]] = deque()
@@ -178,6 +183,7 @@ class Regulator:
         for p in range(PHASES):
             reading = meter[p] if p < len(meter) else 0.0
             error = limit - reading
+            self.spare[p] = max(0.0, low[p] + error)
 
             if error < 0:
                 # Over the limit: straight to the answer, never gradually.

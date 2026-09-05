@@ -111,6 +111,35 @@ def water_fill(headroom: list[float], chargers: list[ChargerDemand]) -> dict[str
     return alloc
 
 
+def _standing_offers(headroom: list[float], demands: list[ChargerDemand],
+                     alloc: dict[str, int], spare: float) -> list[str]:
+    """
+    Leave a minimum offer on chargers nothing is asking for, out of what is
+    genuinely left over.
+
+    Withdrawing current from an empty charger exists to free it for a car that
+    wants it. When no car does, withdrawing achieves nothing and costs
+    something: the offer has to be rebuilt through a probe cycle before a car
+    plugged in later can start, and the setpoint visibly square-waves between
+    nothing and the minimum. Holding the offer steady means a car that arrives
+    begins at once.
+
+    Only ever paid for out of the surplus after every asking car is served, so
+    it can never take current from one that wants it.
+    """
+    left = spare - sum(alloc.values())
+    standing: list[str] = []
+    for d in sorted(demands, key=lambda d: d.order):
+        if alloc.get(d.id, 0) > 0:
+            continue
+        room = min(left, *(headroom[p] for p in d.phases)) if d.phases else left
+        if room >= d.min_current:
+            alloc[d.id] = d.min_current
+            left -= d.min_current
+            standing.append(d.id)
+    return standing
+
+
 def allocate(
     headroom: list[float],
     demands: list[ChargerDemand],
@@ -120,8 +149,9 @@ def allocate(
     """
     Turn available headroom into one integer setpoint per charger.
 
-    Chargers with no car asking are given 0 rather than a share, so an empty
-    charger never strands current a waiting car could use.
+    A charger with no car asking is never given a share of contested current.
+    It does keep a minimum standing offer when there is surplus left over, so
+    that it is ready the moment a car is plugged in - see `_standing_offers`.
 
     `total_cap` limits the sum across all chargers regardless of phase. It is
     how the balancer's own judgement - cold start, the raise delay, the
@@ -139,7 +169,12 @@ def allocate(
 
     active = [d for d in demands if d.wants]
     if not active:
-        result.reason = "no charger has a car asking to charge"
+        standing = _standing_offers(headroom, demands, result.per_charger, spare)
+        result.reason = (
+            f"no car asking to charge; holding {len(standing)} ready at minimum"
+            if standing else
+            "no charger has a car asking to charge"
+        )
         return result
 
     if total_cap is not None:
@@ -188,7 +223,23 @@ def allocate(
     result.starved = [d.id for d in active if d.id not in result.per_charger
                       or result.per_charger[d.id] == 0]
 
-    _assert_within_phase_limits(headroom, candidates, result.per_charger)
+    # By id: `candidates` may hold rebuilt copies carrying the extra total-cap
+    # phase, which no longer compare equal to the originals.
+    served_ids = {c.id for c in candidates}
+    idle = [d for d in demands if d.id not in served_ids]
+    if total_cap is not None:
+        # Carry the same synthetic total-cap phase, so a standing offer counts
+        # against the total and the check below can see it.
+        idle = [
+            ChargerDemand(**{**d.__dict__,
+                             "phases": tuple(d.phases) + (limit_index,)})
+            for d in idle
+        ]
+    _standing_offers(headroom, idle, result.per_charger, spare)
+
+    # Checked last, over everything that ended up with current - a standing
+    # offer is still current out of the same fuse.
+    _assert_within_phase_limits(headroom, candidates + idle, result.per_charger)
 
     shared = sum(result.per_charger.values())
     if len(candidates) == 1:
@@ -303,6 +354,9 @@ class DemandTracker:
     PROBE_EVERY = 300.0         # how often to re-offer a charger we think is empty
     PROBE_FOR = 45.0            # how long each of those offers stands
     SETTLE = 20.0               # seconds before a draw is treated as settled
+    # How long after our own setpoint change a State change is still assumed to
+    # be OUR doing rather than a car's.
+    STATE_SETTLE = 30.0
     IDLE_AFTER = 120.0          # seconds of nothing before we call it idle
     HEADROOM = 1.0              # amps of slack left above an observed limit
 
@@ -322,6 +376,7 @@ class DemandTracker:
         self._cap: dict[str, float] = {}
         self._state: dict[str, object] = {}
         self._empty_since: dict[str, float] = {}
+        self._commanded_at: dict[str, float] = {}
 
     def update(self, now: float, cid: str, setpoint: int, drawn: float) -> None:
         """
@@ -339,6 +394,11 @@ class DemandTracker:
         if previous is None or setpoint > previous:
             self._since[cid] = now
             self._cap.pop(cid, None)     # a bigger offer deserves a fresh answer
+        if previous is not None and setpoint != previous:
+            # Separate from `_since`, which must only move on an increase. This
+            # records that WE changed something, so the charger's reaction to it
+            # is not mistaken for news - see `wants_current`.
+            self._commanded_at[cid] = now
         self._last_setpoint[cid] = setpoint
         self._last_draw[cid] = drawn
 
@@ -361,9 +421,18 @@ class DemandTracker:
         # A change of State means something happened at the charger, and a car
         # being plugged in is the likeliest thing. Only 2 has ever been
         # confirmed, but a *change* is informative whatever the values mean.
+        #
+        # Unless we caused it. Commanding 0 A moves an EVSE into a suspended
+        # state and commanding 6 A moves it back, so our own decisions show up
+        # here as State changes. Believing them made an empty charger toggle for
+        # ever: offered 6 A, judged idle after IDLE_AFTER, paused - and pausing
+        # changed State, which read as a car arriving, which offered 6 A again
+        # once `restart_hold` expired. A square wave on an empty charger, with a
+        # period of exactly IDLE_AFTER + restart_hold.
         previous = self._state.get(cid, _UNSET)
         self._state[cid] = state
-        if previous is not _UNSET and previous != state:
+        settled = (now - self._commanded_at.get(cid, -1e9)) >= self.STATE_SETTLE
+        if previous is not _UNSET and previous != state and settled:
             self._empty_since.pop(cid, None)
             return True
 

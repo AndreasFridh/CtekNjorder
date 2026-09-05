@@ -421,9 +421,14 @@ class Service:
             drawn = max(st["current"]) if st["current"] else 0.0
 
             ceiling = self._ceiling_for(st)
+            # What the house could spare, not what is currently on offer. The
+            # allowance is deliberately held near what the cars actually draw,
+            # so reporting it here answered "how much are we offering" when the
+            # card is asking "how much could I charge at".
             spare = None
             if d and d.headroom:
-                spare = int(min(min(d.headroom), ceiling))
+                room = self.regulator.spare if self.last_house else None
+                spare = int(min(min(room or d.headroom), ceiling))
                 if spare < (st["min_allowed_current"] or 6):
                     spare = 0
 

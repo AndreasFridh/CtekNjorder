@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.14.0
+
+**Update if the allowed current square-waves on a charger with no car.**
+
+- **Our own commands are no longer mistaken for a car arriving.** Commanding
+  0 A moves a charger into a suspended state and commanding 6 A moves it back,
+  so our own decisions came back as `State` changes - which were read as "a car
+  was probably just plugged in". An empty charger therefore toggled for ever:
+  offered 6 A, judged idle two minutes later, paused; the pause changed
+  `State`, that read as a car, and the offer returned once `restart_hold`
+  expired. A `State` change is now only believed if it did not closely follow
+  something we did.
+
+- **A charger with no car is held steady at the minimum** rather than having
+  its offer withdrawn, whenever there is surplus left after every car that is
+  asking has been served. Withdrawing exists to free current for a waiting car;
+  with none waiting it frees nothing, and it cost a visible square wave plus a
+  five-minute probe cycle before a car plugged in later could start. A standing
+  offer is never paid for out of contested current.
+
+- **"Available capacity" on a charger card now reports what the house could
+  spare**, not what is currently being offered. The allowance is deliberately
+  held near what the cars actually draw, so the card read 6 A when the house
+  had 16 A free.
+
 ## 0.13.2
 
 Restored the maintainer name and contact address in `repository.yaml`.

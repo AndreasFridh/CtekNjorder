@@ -66,11 +66,16 @@ property, and it is divided between the cars that want it.
 - **even** always splits equally. More predictable, but it leaves current idle
   whenever one car cannot use its share.
 
-A charger with no car plugged in is given nothing rather than a share, so it
-never strands current a waiting car could use. That is worked out from
-behaviour - a charger that is offered current and does not take it - because
-only the charging value of the charger's `State` field has ever been confirmed
-against real hardware.
+A charger with no car plugged in is never given a share of contested current,
+so it cannot strand current a waiting car could use. That is worked out from
+behaviour - a charger offered current that does not take it - because only the
+charging value of the charger's `State` field has ever been confirmed against
+real hardware.
+
+When there is surplus left over after every car that is asking has been served,
+an empty charger keeps a minimum standing offer instead of being switched off,
+so a car plugged in later starts at once rather than waiting for the next
+check.
 
 When there is not enough for everyone, fewer cars charge properly rather than
 all of them being pushed below the 6 A floor where a car must stop anyway. Cars
