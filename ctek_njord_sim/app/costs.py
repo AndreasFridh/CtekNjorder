@@ -56,6 +56,27 @@ def charging_allowed(state: str | None) -> bool:
         return True
 
 
+def gate_explicitly_on(state: str | None) -> bool:
+    """
+    Has the gate positively said yes?
+
+    Not the same as `charging_allowed`, which also says yes to a gate that is
+    missing or unreadable. That leniency is right for deciding whether to
+    charge, but wrong for reporting *why* a car is charging: a dropped price
+    sensor must not show up in Home Assistant as "charging because it is
+    cheap".
+    """
+    if state is None:
+        return False
+    value = str(state).strip().lower()
+    if value in TRUTHY:
+        return True
+    try:
+        return float(value) != 0.0
+    except ValueError:
+        return False
+
+
 def price_per_kwh(value: float | None, unit: str | None) -> float | None:
     """
     Normalise a price entity to currency per kWh.

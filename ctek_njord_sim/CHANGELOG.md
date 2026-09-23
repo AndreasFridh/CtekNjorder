@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.16.0
+
+- **Charge enable now offers boolean entities.** The picker only ever listed
+  numeric `sensor.*` entities with a power unit, so an `input_boolean`, `switch`
+  or `binary_sensor` could not be chosen, even though the gate itself has always
+  understood `on`/`off`. It now lists those, input_booleans first.
+- **Electricity price has its own picker**, listing sensors whose unit is per
+  kWh, instead of borrowing the power list.
+- **New Home Assistant entity: `binary_sensor.ctek_njorder_charging_low_price`**
+  ("Charging Active Due to Low Price"). On while a car is drawing current and
+  the charge-enable entity is explicitly on. An unavailable gate still permits
+  charging but does not turn it on. Re-posted every minute so it survives a
+  Home Assistant restart.
+
 ## 0.15.3
 
 - Moved the measured meter rate off the charger cards and onto the meter chart,

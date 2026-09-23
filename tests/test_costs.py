@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ctek_njord_sim"))
 
 from app.costs import (  # noqa: E402
+    gate_explicitly_on,
     CostTracker, charging_allowed, price_per_kwh,
 )
 
@@ -157,3 +158,17 @@ def test_cost_per_hour_is_power_times_price():
     assert t.cost_per_hour(11_000, 2.5) == pytest.approx(27.5)
     assert t.cost_per_hour(None, 2.5) is None
     assert t.cost_per_hour(11_000, None) is None
+
+
+# ---------- "charging because it is cheap", as reported to Home Assistant ----------
+
+@pytest.mark.parametrize("state", ["on", "true", "1", "ON", "yes"])
+def test_an_explicit_yes_counts_as_low_price(state):
+    assert gate_explicitly_on(state) is True
+
+
+@pytest.mark.parametrize("state", [None, "", "unknown", "unavailable", "off", "0", "banana"])
+def test_a_missing_or_unclear_gate_is_not_reported_as_low_price(state):
+    # charging_allowed() says yes to these, but that is fail-open leniency,
+    # not evidence that power is cheap.
+    assert gate_explicitly_on(state) is False

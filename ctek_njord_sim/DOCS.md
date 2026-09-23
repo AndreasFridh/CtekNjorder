@@ -159,6 +159,21 @@ quietly leave a car uncharged. Only an explicit off stops charging.
 The gate can only ever withhold current. It never raises an allowance, and load
 balancing still applies underneath it, so enabled does not mean unlimited.
 
+The picker offers `input_boolean`, `switch` and `binary_sensor` entities, but
+you can type any entity id: a numeric sensor works too, where `0` means off.
+
+### Charging Active Due to Low Price
+
+The add-on publishes `binary_sensor.ctek_njorder_charging_low_price` back to
+Home Assistant. It is **on** while a car is actually drawing current *and* the
+charge-enable entity is explicitly on. A gate that is unavailable still lets
+the car charge, but does not turn this on — that charging is not happening
+because power is cheap. It is always off when no charge-enable entity is set.
+
+Its attributes carry the gate entity, the gate's state and whether a car is
+charging. The entity is re-posted every minute, so it reappears shortly after
+Home Assistant restarts.
+
 ## What charging costs
 
 **Electricity price** takes an entity carrying the current price per kWh. With
@@ -291,7 +306,7 @@ rather than charge slower, so the add-on commands 0 and pauses.
 | `settle_tolerance` | `1.5` | Amps of command-vs-actual mismatch counted as "still ramping". |
 | `control_interval` | `15` | Setpoint heartbeat, seconds. |
 | `meter_interval` | `10` | Meter data cadence, seconds. |
-| `charge_enable_entity` | — | Optional. Charging is permitted while this is on. Blank, unavailable or unrecognised all mean permitted. |
+| `charge_enable_entity` | — | Optional. An `input_boolean`, `switch` or `binary_sensor`; charging is permitted while it is on. Blank, unavailable or unrecognised all mean permitted. |
 | `price_entity` | — | Optional. Price per kWh; unit read from the entity. |
 | `currency` | `SEK` | Label shown beside costs. Cosmetic. |
 | `ping_interval` | `30` | Seconds between link checks. |

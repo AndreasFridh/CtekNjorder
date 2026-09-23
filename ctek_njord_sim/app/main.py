@@ -39,7 +39,9 @@ from .balancer import (
     Balancer, BalancerConfig, car_draw_for_baseline,
 )
 from .config import Options
-from .costs import CostTracker, charging_allowed, price_per_kwh
+from .costs import (
+    CostTracker, charging_allowed, gate_explicitly_on, price_per_kwh,
+)
 from .ctek import CtekClient
 from .hass import HassClient
 from .netmon import LinkMonitor
@@ -55,6 +57,13 @@ _LOG = logging.getLogger("ctek")
 
 DEFAULT_VOLTAGE = 230.0
 TICK = 1.0
+
+# Published back to Home Assistant, so automations and dashboards can see when
+# the cheap-power gate is what has a car charging.
+LOW_PRICE_ENTITY = "binary_sensor.ctek_njorder_charging_low_price"
+# Entities posted over REST are forgotten when Home Assistant restarts, so the
+# state is re-posted on this interval even when nothing has changed.
+HA_REFRESH = 60.0
 
 # Seconds a charger holds its setpoint before a one-amp nudge is applied.
 ALLOC_DWELL = 20.0
@@ -126,6 +135,7 @@ class Service:
         self.alloc_reason = "starting up"
         self.over_fuse = 0.0
         self.permitted = True
+        self.cars_drawing = False
         self.last_decision = None
         self.last_house: list[float] | None = None
         self.last_error: str | None = None
@@ -329,6 +339,7 @@ class Service:
                 ))
 
             self.last_demands = {d.id: d for d in demands}
+            self.cars_drawing = any(d.charging for d in demands)
             # The charge-enable gate may only ever withhold current. It caps
             # the total at zero rather than bypassing the balancer, so load
             # balancing still applies underneath it - "enabled" never means
@@ -598,6 +609,54 @@ class Service:
             # read from opts on the next tick, so the setattr above suffices.
         return applied
 
+    # ---------- outputs to Home Assistant ----------
+
+    def low_price_charging(self) -> bool:
+        """
+        Is a car charging, with the charge-enable gate explicitly on?
+
+        Explicitly: a gate that is unavailable still permits charging, but
+        that charging is not happening because power is cheap.
+        """
+        if not self.opts.charge_enable_entity:
+            return False
+        gate = self.hass.state(self.opts.charge_enable_entity)
+        return self.cars_drawing and gate_explicitly_on(gate)
+
+    async def ha_output_loop(self) -> None:
+        """Keep the add-on's own entities in Home Assistant up to date."""
+        last: bool | None = None
+        last_post = retry_at = 0.0
+        while True:
+            await asyncio.sleep(TICK)
+            value = self.low_price_charging()
+            now = time.monotonic()
+            if value == last and now - last_post < HA_REFRESH:
+                continue
+            if now < retry_at:
+                continue
+            try:
+                await supervisor.set_state(
+                    LOW_PRICE_ENTITY, "on" if value else "off",
+                    {
+                        "friendly_name": "Charging Active Due to Low Price",
+                        "icon": "mdi:ev-station" if value else "mdi:ev-plug-type2",
+                        "gate_entity": self.opts.charge_enable_entity or None,
+                        "gate_state": (self.hass.state(self.opts.charge_enable_entity)
+                                       if self.opts.charge_enable_entity else None),
+                        "car_charging": self.cars_drawing,
+                    },
+                )
+            except Exception as exc:                     # noqa: BLE001
+                # Retried on the next tick; the output is informational and
+                # must never get in the way of control.
+                _LOG.debug("could not publish %s: %s", LOW_PRICE_ENTITY, exc)
+                retry_at = now + 30.0
+                continue
+            if value != last:
+                _LOG.info("%s -> %s", LOW_PRICE_ENTITY, "on" if value else "off")
+            last, last_post = value, now
+
     # ---------- lifecycle ----------
 
     async def link_loop(self) -> None:
@@ -641,6 +700,8 @@ class Service:
             asyncio.create_task(self.reconnect_loop()),
             asyncio.create_task(self.link_loop()),
         ]
+        if supervisor.available():
+            tasks.append(asyncio.create_task(self.ha_output_loop()))
         try:
             await asyncio.gather(*tasks)
         finally:

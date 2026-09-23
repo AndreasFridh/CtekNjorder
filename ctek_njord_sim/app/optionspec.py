@@ -25,6 +25,8 @@ class Spec:
     choices: tuple[str, ...] = ()
     restart: bool = False
     advanced: bool = False
+    # Which entity picker list an `entity` option draws its suggestions from.
+    kind: str = "power"
 
 
 SPECS: tuple[Spec, ...] = (
@@ -84,14 +86,15 @@ SPECS: tuple[Spec, ...] = (
 
     # --- automation ---
     Spec("charge_enable_entity", "Charge enable", "entity", "Automation",
-         restart=True,
-         help="Optional. An entity Home Assistant sets on or off to permit "
+         restart=True, kind="switch",
+         help="Optional. An input_boolean, switch or binary_sensor Home "
+              "Assistant sets on or off to permit "
               "charging - use it to charge only when electricity is cheap. "
               "Leave blank and charging is always permitted. If it is set but "
               "unavailable, charging is permitted, so a dropped sensor cannot "
               "silently leave a car uncharged overnight."),
     Spec("price_entity", "Electricity price", "entity", "Automation",
-         restart=True,
+         restart=True, kind="price",
          help="Optional. Current price per kWh. Used to cost each charging "
               "session and show what charging is costing per hour. The unit "
               "is read from the entity, so ore/cents are handled as well as "

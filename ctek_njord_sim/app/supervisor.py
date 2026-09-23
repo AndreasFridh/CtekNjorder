@@ -85,29 +85,25 @@ _UNITS = {
     "power": ("kW", "W", "kw", "w"),
 }
 
+# Entities that are on or off by nature, for the charge-enable picker. These
+# have no unit at all, which is why a unit-only filter never offered them.
+_SWITCH_DOMAINS = ("input_boolean.", "switch.", "binary_sensor.")
 
-async def list_entities() -> dict[str, list[dict]]:
+KINDS = ("current", "voltage", "power", "switch", "price")
+
+
+def classify_entities(states: list[dict]) -> dict[str, list[dict]]:
     """
-    Candidate entities for the settings pickers, grouped by what they measure.
+    Sort Home Assistant states into candidates for each settings picker.
 
-    Filtered by unit rather than by name so it works regardless of which P1
-    integration the user runs.
+    Sensors are filtered by unit rather than by name so it works regardless of
+    which P1 integration the user runs. Booleans are filtered by domain.
     """
-    try:
-        states = await _json("GET", f"{SUPERVISOR}/core/api/states")
-    except Exception as e:
-        _LOG.warning("Could not list entities: %s", e)
-        return {"current": [], "voltage": [], "power": []}
-
-    out: dict[str, list[dict]] = {"current": [], "voltage": [], "power": []}
+    out: dict[str, list[dict]] = {k: [] for k in KINDS}
     for st in states or []:
         eid = st.get("entity_id", "")
-        if not eid.startswith("sensor."):
-            continue
         attrs = st.get("attributes") or {}
-        unit = attrs.get("unit_of_measurement")
-        if not unit:
-            continue
+        unit = attrs.get("unit_of_measurement") or ""
         entry = {
             "entity_id": eid,
             "name": attrs.get("friendly_name") or eid,
@@ -115,6 +111,14 @@ async def list_entities() -> dict[str, list[dict]]:
             "state": st.get("state"),
             "device_class": attrs.get("device_class"),
         }
+        if eid.startswith(_SWITCH_DOMAINS):
+            out["switch"].append(entry)
+            continue
+        if not eid.startswith("sensor.") or not unit:
+            continue
+        if "/kwh" in unit.lower():
+            out["price"].append(entry)
+            continue
         for kind, units in _UNITS.items():
             if unit in units:
                 out[kind].append(entry)
@@ -122,6 +126,33 @@ async def list_entities() -> dict[str, list[dict]]:
 
     for kind in out:
         # Surface the likeliest candidates first: a correct device_class is a
-        # stronger signal than the unit alone.
-        out[kind].sort(key=lambda e: (e["device_class"] != kind, e["entity_id"]))
+        # stronger signal than the unit alone, and a hand-made input_boolean
+        # is the likeliest thing to drive the charge-enable gate.
+        if kind == "switch":
+            out[kind].sort(key=lambda e: (not e["entity_id"].startswith("input_boolean."),
+                                          e["entity_id"]))
+        else:
+            out[kind].sort(key=lambda e: (e["device_class"] != kind, e["entity_id"]))
     return out
+
+
+async def list_entities() -> dict[str, list[dict]]:
+    """Candidate entities for the settings pickers, grouped by what they are."""
+    try:
+        states = await _json("GET", f"{SUPERVISOR}/core/api/states")
+    except Exception as e:
+        _LOG.warning("Could not list entities: %s", e)
+        return {k: [] for k in KINDS}
+    return classify_entities(states)
+
+
+async def set_state(entity_id: str, state: str, attributes: dict) -> None:
+    """
+    Create or update an entity in Home Assistant.
+
+    An entity made this way has no unique_id and is not restored when Home
+    Assistant restarts, so the caller has to keep re-posting it rather than
+    posting only on change.
+    """
+    await _json("POST", f"{SUPERVISOR}/core/api/states/{entity_id}",
+                {"state": state, "attributes": attributes}, timeout=10.0)

@@ -757,7 +757,8 @@ function field(sp) {
     return [0, 1, 2].map(i => entityInput(sp.key, i, arr[i], kind)).join('');
   }
   if (sp.type === 'entity')
-    return `<input id="f_${sp.key}" data-key="${sp.key}" list="dl-power" value="${esc(v)}" placeholder="sensor.…">`;
+    return `<input id="f_${sp.key}" data-key="${sp.key}" list="dl-${sp.kind || 'power'}"
+      value="${esc(v)}" placeholder="${sp.kind === 'switch' ? 'input_boolean.…' : 'sensor.…'}">`;
   const t = (sp.type === 'int' || sp.type === 'float') ? 'number'
     : (sp.type === 'password' ? 'password' : 'text');
   const attrs = [
@@ -785,7 +786,7 @@ function renderForm() {
     out += '</div>';
   }
   // Datalists power the entity pickers without needing a custom widget.
-  out += ['current', 'voltage', 'power'].map(k =>
+  out += ['current', 'voltage', 'power', 'switch', 'price'].map(k =>
     `<datalist id="dl-${k}">` + ((ENTS && ENTS[k]) || []).map(e =>
       `<option value="${esc(e.entity_id)}">${esc(e.name)} — ${esc(e.state)} ${esc(e.unit)}</option>`).join('') +
     '</datalist>').join('');
