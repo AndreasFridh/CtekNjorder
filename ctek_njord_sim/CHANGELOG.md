@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.18.0
+
+- **Detects a second controller on the charger.** The logs from 0.17.2 showed
+  the charger's `MaxAllowedCurrent` stuck at 16 A while we commanded 0 A, and
+  every pause lasting about two seconds before charging resumed. That is
+  another controller - almost certainly the Nanogrid Air, still plugged in -
+  sending 16 A on its own heartbeat and overriding ours: the car starting and
+  stopping over and over. The add-on now listens on its own control topic and,
+  when it hears a setpoint it did not send, logs a warning and shows a red
+  banner. The fix is to unplug or block the Nanogrid Air.
+- The *Charging Active Due to Low Price* entity no longer flaps. It followed
+  the car's instantaneous draw, which flickers across 0.5 A while a car
+  starts; it now follows whether a car asking for current is being given any.
+- `PROTOCOL.md` records the `State` values seen on real hardware (2, 3, 4, 8).
+
 ## 0.17.2
 
 - **Fixed (probably): the car starting and stopping over and over while

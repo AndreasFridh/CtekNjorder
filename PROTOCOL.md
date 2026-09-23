@@ -177,11 +177,32 @@ then throttle against the wrong phase. `PrimaryPhase: 1` and
    Only `6` and `16` have been observed in a capture. Field report
    (2026-09, add-on 0.17.1): with `0` re-published every 15 s the car was
    heard starting and stopping repeatedly, drawing ~0.7 A in bursts. Suspected
-   cause: each repeated `0` restarts the charger's pause. Since 0.17.2 a `0`
-   is not repeated once `MaxAllowedCurrent` echoes it. Unconfirmed until a
-   capture shows the charger echoing `0`, and what `State` does meanwhile.
-3. **`State` enum.** Only `2` (charging) seen. Idle/connected/finished/fault
-   values unknown.
+   cause: each repeated `0` restarts the charger's pause.
+
+   The 0.17.2 logs contradicted that. `MaxAllowedCurrent` read **16
+   throughout**, while we commanded 0 and while we commanded 6, and each pause
+   (`State` 4) held only ~2 s after our command before charging resumed. That
+   fits a **second controller** - a Nanogrid Air still on the network -
+   sending 16 on the same 12-15 s heartbeat, overriding each of our commands
+   two seconds later. The add-on now subscribes to its own control topic and
+   reports any setpoint it did not send. Whether a lone `0` holds is still
+   unconfirmed.
+
+   Implication for `MaxAllowedCurrent`: it reflects whichever controller spoke
+   last, not necessarily us.
+3. **`State` enum.** Field report (2026-09, add-on 0.17.2, car plugged in)
+   saw five values. Meanings are inferred, not confirmed:
+
+   | `State` | Seen when |
+   |---|---|
+   | `1` | Mock charger only - not yet seen on hardware |
+   | `2` | Charging; also ~0.5 A while a car wakes and starts |
+   | `3` | Brief (~1-5 s) step between `2` and `4` as charging is cut |
+   | `4` | Paused at 0 A with the car still plugged in |
+   | `8` | On connect, car plugged in, nothing drawn - after a long pause |
+
+   The sequence `2 → 3 → 4 → 2` repeated every ~15 s while two controllers
+   were fighting (see below).
 4. **Does the charger require `adapterinfo`** before honouring a setpoint, or is
    the control topic sufficient alone?
 5. **No overload event captured.** The house baseline never exceeded 5.5 A, so

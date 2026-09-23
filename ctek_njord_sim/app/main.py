@@ -343,7 +343,6 @@ class Service:
                 ))
 
             self.last_demands = {d.id: d for d in demands}
-            self.cars_drawing = any(d.charging for d in demands)
             # The charge-enable gate may only ever withhold current. It caps
             # the total at zero rather than bypassing the balancer, so load
             # balancing still applies underneath it - "enabled" never means
@@ -390,6 +389,12 @@ class Service:
             changed = settled != self.allocation
             self.allocation = settled
             self.alloc_reason = allocation.reason
+            # "Charging" for the Home Assistant output means we are giving
+            # current to a car that asks for it - not the instantaneous draw,
+            # which flickers across the threshold while a car starts up and
+            # made the entity flap on and off.
+            self.cars_drawing = any(
+                self.allocation.get(d.id, 0) > 0 and d.wants for d in demands)
 
             # Per charger: a change is sent at once, and the heartbeat refreshes
             # what is unchanged - except a pause the charger has confirmed,
@@ -544,6 +549,12 @@ class Service:
                 # "ready, N A available" instead of implying something is wrong.
                 "available": spare,
                 "believed_empty": self.demand.believed_empty(client.id),
+                # Someone else's setpoint on our control topic, within the last
+                # two minutes - see protocol.ForeignCommands.
+                "foreign_command": (
+                    st["foreign_value"]
+                    if st["foreign_age"] is not None and st["foreign_age"] < 120
+                    and not self.opts.dry_run else None),
                 "age": None if st["age"] == float("inf") else round(st["age"], 1),
             })
 

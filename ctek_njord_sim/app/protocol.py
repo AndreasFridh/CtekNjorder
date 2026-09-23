@@ -97,6 +97,8 @@ class Topics:
             self.outlet_config,
             self.outlet_update,
             self.outlet_info,
+            # Our own control topic, to hear anyone else commanding the charger.
+            self.control_current,
         ]
 
 
@@ -160,6 +162,43 @@ def heartbeat_needed(setpoint: int, echoed, echo_age: float) -> bool:
     if setpoint != 0:
         return True
     return not (echoed == 0 and echo_age <= ECHO_FRESH)
+
+
+class ForeignCommands:
+    """
+    Tells our own setpoints apart from anyone else's on the control topic.
+
+    The broker echoes our publishes back to us, so a value we did not send
+    recently is someone else's - in practice a Nanogrid Air that is still
+    plugged in. Two controllers on one charger fight: ours said 0 A, it said
+    16 A a couple of seconds later, and the car started and stopped every
+    heartbeat. The charger gives no other sign of it; its `MaxAllowedCurrent`
+    simply showed the other controller's value throughout.
+    """
+
+    ECHO_WINDOW = 5.0
+
+    def __init__(self):
+        self._sent: list[tuple[float, int]] = []
+        self.last_value: int | None = None
+        self.last_at: float | None = None
+
+    def sent(self, now: float, value: int) -> None:
+        self._sent = [(t, v) for t, v in self._sent if now - t <= self.ECHO_WINDOW]
+        self._sent.append((now, int(value)))
+
+    def seen(self, now: float, value) -> bool:
+        """Record a value heard on the control topic. True if it was not ours."""
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return False
+        for i, (t, v) in enumerate(self._sent):
+            if v == value and now - t <= self.ECHO_WINDOW:
+                del self._sent[i]            # each echo accounts for one send
+                return False
+        self.last_value, self.last_at = value, now
+        return True
 
 
 def parse_outlet_update(payload: dict) -> dict:

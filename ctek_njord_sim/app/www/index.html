@@ -353,6 +353,13 @@ function renderBanners(s) {
       '<b>Charging not allowed due to high price.</b>&nbsp;' +
       esc(s.gate_entity || 'The charge-enable entity') + ' is off, so every ' +
       'charger is held at 0 A. Load balancing resumes as soon as it turns on.');
+  (s.chargers || []).filter(c => c.foreign_command != null).forEach(c => {
+    out += banner('bad',
+      `<b>Another controller is commanding ${esc(c.name)}.</b>&nbsp;` +
+      `Something other than this add-on sent it ${esc(c.foreign_command)} A - ` +
+      'almost certainly the Nanogrid Air, still plugged in. Unplug it or block ' +
+      'it on your network: two controllers fight, and the car starts and stops.');
+  });
   if (s.dry_run)
     out += banner('warn', '<b>Dry run.</b>&nbsp;Decisions are logged but nothing is sent to the charger. Turn this off under Settings once you are happy — and block the Nanogrid Air first, or the two will fight.');
   // Distinguish "never answered" - most likely an address for a charger that

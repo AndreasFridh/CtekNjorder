@@ -52,6 +52,8 @@ class ChargerState:
         self.energy: int | None = None
         self.power: int | None = None
         self.updated_at: float = 0.0
+        # Setpoints on our control topic that we did not send.
+        self.foreign = protocol.ForeignCommands()
 
     def current_at(self, when: float) -> list[float]:
         """
@@ -82,6 +84,9 @@ class ChargerState:
                 "energy": self.energy,
                 "power": self.power,
                 "age": time.time() - self.updated_at if self.updated_at else float("inf"),
+                "foreign_value": self.foreign.last_value,
+                "foreign_age": (time.time() - self.foreign.last_at
+                                if self.foreign.last_at else None),
             }
 
 
@@ -118,6 +123,7 @@ class CtekClient:
         self.topics: Topics | None = None
         self._announced = False
         self._last_reconnect = 0.0
+        self._foreign_logged = 0.0
 
         cid = f"ctek-ha-sim-{uuid.uuid4().hex[:8]}"
         self._c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=cid,
@@ -232,6 +238,10 @@ class CtekClient:
             return
 
         st = self.state
+        if topic == t.control_current:
+            if not msg.retain:
+                self._heard_command(payload)
+            return
         with st._lock:
             if topic == t.outlet_update:
                 parsed = protocol.parse_outlet_update(payload)
@@ -304,4 +314,28 @@ class CtekClient:
         """The one message that actually steers the charger."""
         if self.topics is None:
             return
+        if not self.dry_run:
+            with self.state._lock:
+                self.state.foreign.sent(time.time(), amps)
         self._publish(self.topics.control_current, protocol.control_current_payload(amps))
+
+    FOREIGN_LOG_EVERY = 60.0
+
+    def _heard_command(self, value) -> None:
+        with self.state._lock:
+            foreign = self.state.foreign.seen(time.time(), value)
+        if not foreign:
+            return
+        now = time.time()
+        if now - self._foreign_logged < self.FOREIGN_LOG_EVERY:
+            return
+        self._foreign_logged = now
+        if self.dry_run:
+            _LOG.info("[%s] another controller is commanding %sA (dry run: "
+                      "expected, it is still in charge)", self.name, value)
+        else:
+            _LOG.warning(
+                "[%s] ANOTHER CONTROLLER is commanding this charger (%sA, not "
+                "sent by us) - almost certainly the Nanogrid Air. Unplug it: "
+                "two controllers fight, and the car starts and stops.",
+                self.name, value)
