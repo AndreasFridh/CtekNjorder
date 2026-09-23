@@ -159,6 +159,10 @@ quietly leave a car uncharged. Only an explicit off stops charging.
 The gate can only ever withhold current. It never raises an allowance, and load
 balancing still applies underneath it, so enabled does not mean unlimited.
 
+While the gate is off, the dashboard says **Charging not allowed due to high
+price** in red on each charger card, and the charging chart shades those spans
+red.
+
 The picker offers `input_boolean`, `switch` and `binary_sensor` entities, but
 you can type any entity id: a numeric sensor works too, where `0` means off.
 

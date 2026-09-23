@@ -375,7 +375,7 @@ class Service:
                     f"meter is {self.over_fuse}A over the limit - shedding now"
                 )
             if not permitted:
-                allocation.reason = "charging disabled from Home Assistant"
+                allocation.reason = "charging not allowed due to high price"
             self.permitted = permitted
             settled = apply_dwell(
                 now, allocation.per_charger, self.allocation,
@@ -414,6 +414,7 @@ class Service:
                 [round(c, 1) for c in current] if current else None,
                 [round(total_car[p], 1) for p in range(3)],
                 sum(self.allocation.values()),
+                blocked=not permitted,
             )
 
             if (now - self._last_status) >= 60:

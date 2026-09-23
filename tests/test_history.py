@@ -155,3 +155,32 @@ def test_no_data_dir_at_all_is_tolerated(tmp_path):
     fill(h, 120)
     h.close()
     assert h.series(30)["t"]
+
+
+# ---------- price-blocked spans, shaded red on the charge chart ----------
+
+def test_blocked_spans_reach_the_live_series(data_dir):
+    h = History(data_dir)
+    start = time.time() - 10
+    for i in range(10):
+        h.add(start + i, [4.0] * 3, [0.0] * 3, 0, blocked=5 <= i < 8)
+    assert h.series(30)["blocked"] == [False] * 5 + [True] * 3 + [False] * 2
+
+
+def test_a_minute_blocked_at_all_is_blocked_after_a_restart(data_dir):
+    h = History(data_dir)
+    start = time.time() - 600
+    start -= start % 60
+    for i in range(180):
+        h.add(start + i, [4.0] * 3, [0.0] * 3, 0, blocked=(i == 70))
+    h.close()
+    assert [r[4] for r in History(data_dir).long] == [False, True, False]
+
+
+def test_history_written_before_the_blocked_flag_still_loads(data_dir):
+    t = time.time() - 120
+    with open(os.path.join(data_dir, "history.jsonl"), "w") as f:
+        f.write(json.dumps([t, [4, 4, 4], [0, 0, 0], 6]) + "\n")
+    series = History(data_dir)._pack(History(data_dir).long, "1m")
+    assert series["blocked"] == [False]
+    assert series["setpoint"] == [6]

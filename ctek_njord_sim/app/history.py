@@ -51,6 +51,7 @@ class History:
         self._house = None
         self._car = None
         self._setpoint = None
+        self._blocked = False
 
         self._load()
 
@@ -67,8 +68,9 @@ class History:
                     if not line:
                         continue
                     try:
-                        t, house, car, sp = json.loads(line)
-                        rows.append((t, house, car, sp))
+                        # Rows written before 0.17.0 have no blocked flag.
+                        t, house, car, sp, *rest = json.loads(line)
+                        rows.append((t, house, car, sp, bool(rest and rest[0])))
                     except Exception:
                         bad += 1
         except Exception as e:
@@ -119,8 +121,9 @@ class History:
 
     # ---------- recording ----------
 
-    def add(self, now: float, house, car, setpoint) -> None:
-        self.live.append((round(now, 1), house, car, setpoint))
+    def add(self, now: float, house, car, setpoint, blocked: bool = False) -> None:
+        """`blocked`: the charge-enable gate was off - charging refused on price."""
+        self.live.append((round(now, 1), house, car, setpoint, bool(blocked)))
 
         bucket = now - (now % BUCKET_SECONDS)
         if self._bucket_t is None:
@@ -133,12 +136,16 @@ class History:
         self._car = _worst(self._car, car)
         if setpoint is not None:
             self._setpoint = setpoint if self._setpoint is None else min(self._setpoint, setpoint)
+        # Worst case again: a minute that was blocked at all shows as blocked.
+        self._blocked = self._blocked or bool(blocked)
 
     def _flush(self) -> None:
-        row = [round(self._bucket_t, 0), self._house, self._car, self._setpoint]
-        self.long.append(tuple(row))
+        row = [round(self._bucket_t, 0), self._house, self._car, self._setpoint,
+               1 if self._blocked else 0]
+        self.long.append((*row[:4], self._blocked))
         self._append(row)
         self._house = self._car = self._setpoint = None
+        self._blocked = False
 
     def close(self) -> None:
         """Persist the bucket in progress so a restart does not lose it."""
@@ -181,5 +188,6 @@ class History:
             "house": [r[1] for r in rows],
             "car": [r[2] for r in rows],
             "setpoint": [r[3] for r in rows],
+            "blocked": [bool(r[4]) if len(r) > 4 else False for r in rows],
             "resolution": resolution,
         }

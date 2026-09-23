@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.17.0
+
+- **Charging blocked by the charge-enable entity is now shown in red.**
+  - The *Charging — allowed vs used* chart shades the spans where charging was
+    refused on price, so a flat zero reads as a decision, not a fault.
+  - Each charger card shows a red **Charging not allowed due to high price**
+    tag, naming the entity that is off.
+  - The dashboard banner says the same thing, in red.
+- Chart history records the blocked flag, per second live and per minute
+  (blocked if any second of it was) in the persisted history. History written
+  by earlier versions loads as not blocked.
+
 ## 0.16.0
 
 - **Charge enable now offers boolean entities.** The picker only ever listed

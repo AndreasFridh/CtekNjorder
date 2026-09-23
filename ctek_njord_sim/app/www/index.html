@@ -349,8 +349,8 @@ function renderBanners(s) {
   if (s.error)
     out += banner('bad', `<b>Configuration problem.</b>&nbsp;${esc(s.error)} Fix it under Settings.`);
   if (s.charging_permitted === false)
-    out += banner('warn',
-      '<b>Charging is switched off from Home Assistant.</b>&nbsp;' +
+    out += banner('bad',
+      '<b>Charging not allowed due to high price.</b>&nbsp;' +
       esc(s.gate_entity || 'The charge-enable entity') + ' is off, so every ' +
       'charger is held at 0 A. Load balancing resumes as soon as it turns on.');
   if (s.dry_run)
@@ -432,6 +432,9 @@ function renderChargers(s) {
       cls = 'off'; card = ' down';
       note = c.ever_seen ? 'Reconnecting automatically'
                          : 'No answer from this address';
+    } else if (LAST && LAST.charging_permitted === false) {
+      tag = 'Charging not allowed due to high price'; cls = 'off';
+      note = esc(LAST.gate_entity || 'Charge enable') + ' is off';
     } else if (drawing) {
       tag = 'charging'; cls = 'on';
     } else if (c.allocated > 0) {
@@ -598,6 +601,24 @@ function plot(cv, series, opts) {
   const X = i => pad.l + (w - pad.l - pad.r) * (n === 1 ? 0 : i / (n - 1));
   const Y = v => ht - pad.b - (ht - pad.t - pad.b) * (v / max);
 
+  // Spans where charging was refused on price, shaded so a flat zero in the
+  // chart reads as a decision rather than a fault.
+  if (opts.bands) {
+    const half = n > 1 ? (w - pad.l - pad.r) / (n - 1) / 2 : 0;
+    g.fillStyle = css('--bad'); g.globalAlpha = 0.16;
+    let from = null;
+    for (let i = 0; i <= n; i++) {
+      const on = i < n && opts.bands[i];
+      if (on && from === null) from = i;
+      if (!on && from !== null) {
+        const x0 = Math.max(pad.l, X(from) - half), x1 = Math.min(w - pad.r, X(i - 1) + half);
+        g.fillRect(x0, pad.t, Math.max(1, x1 - x0), ht - pad.t - pad.b);
+        from = null;
+      }
+    }
+    g.globalAlpha = 1;
+  }
+
   g.font = '10px system-ui'; g.lineWidth = 1;
   const stepY = max > 40 ? 20 : (max > 20 ? 10 : 5);
   for (let v = 0; v <= max; v += stepY) {
@@ -706,11 +727,13 @@ function renderCharts(h) {
   plot($('#chart-charge'), [
     { label: 'Allowed', color: css('--ok'), values: h.setpoint, width: 2, step: true },
     { label: 'Used', color: css('--car'), values: used, width: 1.6 },
-  ], { n, spanMin, floor: 16 });
+  ], { n, spanMin, floor: 16, bands: h.blocked });
   legend($('#leg-charge'), [
     { label: 'Allowed', color: css('--ok'),
       value: lastOf(h.setpoint) == null ? '–' : lastOf(h.setpoint) + ' A' },
     { label: 'Used (peak phase)', color: css('--car'), value: amps(lastOf(used)) },
+    ...((h.blocked || []).some(Boolean)
+      ? [{ label: 'Not allowed due to high price', color: css('--bad') + '44' }] : []),
   ]);
 }
 
