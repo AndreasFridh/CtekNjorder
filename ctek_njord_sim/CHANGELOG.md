@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.17.1
+
+- **Fixed: a car being plugged in could go unnoticed.** A plug-in shows up as a
+  change in the charger's `State`, and a change is only noticed once. The
+  dashboard read the same state tracker as the control loop, so a dashboard
+  refresh could get to the change first and leave the control loop thinking
+  the charger was still empty. The car then waited for the next 5-minute
+  re-offer, and the card said "Not connected". The dashboard now only reads
+  the control loop's last verdict.
+- **Fixed: the dashboard state call failed** until the regulator had taken its
+  first step, i.e. until a charger was bound and the meter had reported.
+- The idle card no longer says "Not connected". The add-on cannot see a plug,
+  only current, so it now says "Not charging", or "No car drawing current"
+  when it has concluded the charger is empty.
+- Each card shows the charger's raw **Charger state** value. Only `2`
+  (charging) is understood so far; please report what yours shows with a car
+  plugged in but not charging.
+
 ## 0.17.0
 
 - **Charging blocked by the charge-enable entity is now shown in red.**

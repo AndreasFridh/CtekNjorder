@@ -694,3 +694,25 @@ def test_the_hold_does_not_delay_a_charger_that_never_stopped():
     out = apply_dwell(100.0, {"a": 10}, {"a": 8}, {"a": 0.0}, 20.0,
                       restart_hold=90.0, stopped_at={})
     assert out["a"] == 10
+
+
+def test_reading_the_verdict_does_not_swallow_a_car_arriving():
+    """
+    The web UI used to call `wants_current` to fill in its cards. That records
+    State, so a UI poll landing between a car being plugged in and the next
+    control tick consumed the change, and the control loop kept believing the
+    charger was empty - the card said "Not connected" with a car in it.
+    """
+    t = DemandTracker()
+    t.update(0.0, "d", setpoint=9, drawn=0.0)
+    t.wants_current(10.0, "d", state=1, drawn=0.0)
+    t.wants_current(t.IDLE_AFTER + 1, "d", state=1, drawn=0.0)
+    assert t.believed_empty("d")
+    assert t.last_wants("d") is False
+
+    # The car is plugged in and the UI looks before the control loop does.
+    assert t.last_wants("d") is False
+    assert t.wants_current(t.IDLE_AFTER + 40, "d", state=2, drawn=0.0), (
+        "the State change must still reach the control loop"
+    )
+    assert t.last_wants("d") is True

@@ -399,6 +399,7 @@ class DemandTracker:
         self._state: dict[str, object] = {}
         self._empty_since: dict[str, float] = {}
         self._commanded_at: dict[str, float] = {}
+        self._wants: dict[str, bool] = {}
 
     def update(self, now: float, cid: str, setpoint: int, drawn: float) -> None:
         """
@@ -430,6 +431,24 @@ class DemandTracker:
     def wants_current(self, now: float, cid: str, state: int | None, drawn: float) -> bool:
         """
         Is there a car here asking to charge?
+
+        Not a query: it records `state` so the next call can spot a change, and
+        a change is consumed by whichever call sees it first. So only the
+        control loop may call this. Anything else - the web UI - must use
+        `last_wants`, or it can swallow the State change that announces a car
+        being plugged in, and the control loop goes on believing the charger
+        is empty.
+        """
+        wants = self._judge_wants(now, cid, state, drawn)
+        self._wants[cid] = wants
+        return wants
+
+    def last_wants(self, cid: str) -> bool | None:
+        """What `wants_current` last concluded, without judging again."""
+        return self._wants.get(cid)
+
+    def _judge_wants(self, now: float, cid: str, state: int | None, drawn: float) -> bool:
+        """
 
         `State == 2` is the one value confirmed against real hardware. Anything
         drawing current is obviously active regardless. A charger we have

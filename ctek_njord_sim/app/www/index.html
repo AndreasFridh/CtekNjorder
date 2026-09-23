@@ -441,8 +441,12 @@ function renderChargers(s) {
       tag = 'ready'; cls = 'on';
       note = 'Not charging \u00b7 ' + c.allocated + ' A allowed';
     } else if (c.available > 0) {
+      // We cannot see a plug, only current. "Not connected" claimed more than
+      // that, and read as a bug to anyone with a car sitting in the socket.
       tag = 'ready'; cls = ''; card = ' idle';
-      note = 'Not connected \u00b7 Available capacity ' + c.available + ' A';
+      note = (c.believed_empty
+        ? 'No car drawing current \u00b7 offered again every 5 min'
+        : 'Not charging') + ' \u00b7 ' + c.available + ' A available';
     } else {
       tag = 'waiting for capacity'; cls = 'wait'; card = ' idle';
       note = 'No spare current right now';
@@ -471,6 +475,8 @@ function renderChargers(s) {
     // OVERRIDE the Max charge setting, so a charger reporting a low fuse
     // rating quietly caps everything - and used to do so invisibly.
     if (c.fuse_rating != null) rows.push(row('Charger rating', c.fuse_rating + ' A'));
+    // Raw, because only 2 (charging) is understood yet - see PROTOCOL.md.
+    if (c.bound && c.state != null) rows.push(row('Charger state', esc(c.state)));
     if (c.min_allowed_current != null)
       rows.push(row('Charger minimum', c.min_allowed_current + ' A'));
 

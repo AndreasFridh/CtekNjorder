@@ -138,6 +138,8 @@ class Service:
         self.cars_drawing = False
         self.last_decision = None
         self.last_house: list[float] | None = None
+        self.last_baseline: list[float] | None = None
+        self.last_step_at: float | None = None
         self.last_error: str | None = None
         self._last_control = 0.0
         self._last_meter = 0.0
@@ -489,8 +491,9 @@ class Service:
                 "min_allowed_current": st["min_allowed_current"],
                 "energy": st["energy"],
                 "power": st["power"],
-                "wants": self.demand.wants_current(
-                    time.time(), client.id, st["state"], drawn),
+                # Read, never re-judged: judging records State, and doing it
+                # from here could swallow the change that means a car arrived.
+                "wants": self.demand.last_wants(client.id),
                 # What the car looks able to use. Below its ceiling means we
                 # have concluded it is limited and handed the surplus on.
                 "cap": (round(self.last_demands[client.id].cap, 1)
