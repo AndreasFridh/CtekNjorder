@@ -353,6 +353,13 @@ function renderBanners(s) {
       '<b>Charging not allowed due to high price.</b>&nbsp;' +
       esc(s.gate_entity || 'The charge-enable entity') + ' is off, so every ' +
       'charger is held at 0 A. Load balancing resumes as soon as it turns on.');
+  (s.chargers || []).filter(c => c.overdraw_age != null && c.overdraw_age < 300).forEach(c => {
+    out += banner('bad',
+      `<b>${esc(c.name)} is not holding its setpoint.</b>&nbsp;` +
+      `Its car drew well above the current it was allowed within the last ` +
+      `${Math.max(1, Math.round(c.overdraw_age / 60))} min. The charger is overriding ` +
+      'this add-on, so load balancing cannot be relied on. See the add-on log.');
+  });
   (s.chargers || []).filter(c => c.foreign_command != null).forEach(c => {
     out += banner('bad',
       `<b>Another controller is commanding ${esc(c.name)}.</b>&nbsp;` +

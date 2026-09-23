@@ -527,6 +527,16 @@ class DemandTracker:
             self._cap.pop(cid, None)
             return float(max_current)
 
+        remembered = self._cap.get(cid)
+        if remembered is not None and drawn > remembered + EPS:
+            # Drawing MORE than we believe the car can use proves the belief
+            # wrong. Without this the cap could never lift: it only cleared on
+            # a full offer, and the offer is held under the cap. A car misjudged
+            # while ramping slowly after a pause sat at 7 A for good, while
+            # repeatedly drawing 16 A whenever the charger let it. Judged
+            # afresh below, against what it is drawing now.
+            self._cap.pop(cid, None)
+
         if drawn >= setpoint - self.SATISFIED_WITHIN:
             # Taking everything offered - but that only means it wants MORE if
             # it was offered at least as much as we already believe it can use.

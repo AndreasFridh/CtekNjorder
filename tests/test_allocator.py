@@ -716,3 +716,21 @@ def test_reading_the_verdict_does_not_swallow_a_car_arriving():
         "the State change must still reach the control loop"
     )
     assert t.last_wants("d") is True
+
+
+def test_a_car_drawing_more_than_its_cap_lifts_the_cap():
+    """
+    Field chart: allowance stuck at 7 A with ~10 A of room, while the car
+    repeatedly drew 13-16 A. A cap from a slow ramp could never be corrected,
+    because it only lifted on a full offer and the offer was held under it.
+    """
+    t = DemandTracker()
+    t.update(0.0, "a", setpoint=14, drawn=0.0)
+    cap = t.cap_for(t.SETTLE + 1, "a", setpoint=14, drawn=7.0, max_current=16)
+    assert cap == pytest.approx(8.0), "a slow ramp misread as a limit"
+
+    t.update(100.0, "a", setpoint=7, drawn=7.0)
+    assert t.cap_for(200.0, "a", setpoint=7, drawn=7.0, max_current=16) == pytest.approx(8.0)
+    assert t.cap_for(201.0, "a", setpoint=7, drawn=15.8, max_current=16) == 16.0, (
+        "a car drawing twice its cap is not limited to it"
+    )

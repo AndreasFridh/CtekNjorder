@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.19.1
+
+- **Fixed: the allowance could get stuck low for good.** A car that took only
+  part of its offer for 20 s - typically while ramping up slowly after a pause
+  - was judged to be limited to what it drew, and capped there. The cap only
+  lifted when the car took everything it was offered, but the offer was held
+  under the cap, so it never lifted: a field chart showed 7 A allowed for
+  twenty minutes with ~10 A of room. A car seen drawing more than its cap now
+  clears it.
+- **Warns when a charger does not hold its setpoint.** The same chart showed
+  the car, allowed 7 A, spiking to 13-16 A every half minute, with the meter
+  following it towards the fuse. The add-on now logs a warning and shows a red
+  banner when a car draws more than 2 A over its setpoint for 2 s, judged only
+  once the setpoint has been steady for 6 s, since a car may take up to 5 s to
+  follow a cut.
+
 ## 0.19.0
 
 - **A pause is sent once, not every 15 s.** With the Nanogrid Air unplugged

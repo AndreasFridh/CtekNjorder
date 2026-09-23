@@ -145,6 +145,11 @@ class Service:
         self._published: dict[str, int] = {}
         self._sent_at: dict[str, float] = {}
         self._reported: dict[str, tuple] = {}
+        # When each charger's car started drawing clearly above its setpoint,
+        # and when that was last warned about.
+        self._overdraw_since: dict[str, float] = {}
+        self._overdraw_warned: dict[str, float] = {}
+        self.overdraw: dict[str, float] = {}
         self._last_meter = 0.0
         self._last_status = 0.0
 
@@ -422,6 +427,7 @@ class Service:
             if heartbeat:
                 self._last_control = now
             self._log_charger_changes(bound, states)
+            self._check_overdraw(now, wall, bound, states)
 
             # Every charger runs its own broker, so meter data goes to each.
             if current and (now - self._last_meter) >= opts.meter_interval:
@@ -482,6 +488,42 @@ class Service:
                     "car drawing %.1fA (we command %sA)",
                     client.name, st["state"], st["max_allowed_current"], drawn,
                     self.allocation.get(client.id, 0))
+
+    OVERDRAW_MARGIN = 2.0      # amps above the setpoint that are not jitter
+    OVERDRAW_FOR = 2.0         # seconds it must last
+    # A car may take up to 5 s to follow a reduction (IEC 61851), so nothing is
+    # judged until the setpoint has been unchanged for longer than that.
+    OVERDRAW_SETTLE = 6.0
+    OVERDRAW_LOG_EVERY = 60.0
+
+    def _check_overdraw(self, now, wall, bound, states) -> None:
+        """
+        Notice a car drawing clearly more than we allow it.
+
+        Everything here assumes the charger holds the setpoint it is given. A
+        field chart showed a car allowed 7 A spiking to 13-16 A every half
+        minute, with the meter following it up towards the fuse. That is the
+        charger overriding us, and nothing downstream can correct for it, so
+        it is surfaced rather than silently absorbed.
+        """
+        for client in bound:
+            st = states[client.id]
+            drawn = max(st["current"]) if st["current"] else 0.0
+            sp = self.allocation.get(client.id, 0)
+            settled = now - self._alloc_changed_at.get(client.id, -1e9) >= self.OVERDRAW_SETTLE
+            if sp > 0 and settled and drawn > sp + self.OVERDRAW_MARGIN:
+                since = self._overdraw_since.setdefault(client.id, wall)
+                if wall - since >= self.OVERDRAW_FOR:
+                    self.overdraw[client.id] = wall
+                    if wall - self._overdraw_warned.get(client.id, -1e9) >= self.OVERDRAW_LOG_EVERY:
+                        self._overdraw_warned[client.id] = wall
+                        _LOG.warning(
+                            "[%s] car drawing %.1fA with %sA allowed - the charger "
+                            "is not holding our setpoint (charger reports "
+                            "State=%s MaxAllowedCurrent=%s)", client.name, drawn,
+                            sp, st["state"], st["max_allowed_current"])
+            else:
+                self._overdraw_since.pop(client.id, None)
 
     # ---------- state for the web UI ----------
 
@@ -558,6 +600,9 @@ class Service:
                 "believed_empty": self.demand.believed_empty(client.id),
                 # Someone else's setpoint on our control topic, within the last
                 # two minutes - see protocol.ForeignCommands.
+                # Last time the car was seen drawing well over its setpoint.
+                "overdraw_age": (round(time.time() - self.overdraw[client.id])
+                                 if client.id in self.overdraw else None),
                 "foreign_command": (
                     st["foreign_value"]
                     if st["foreign_age"] is not None and st["foreign_age"] < 120

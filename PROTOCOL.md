@@ -195,6 +195,13 @@ then throttle against the wrong phase. `PrimaryPhase: 1` and
    a `0` is sent once and repeated only if the car draws ≥ 2.5 A through it.
    Still open: does a lone `0` hold, or does the charger resume charging
    after it?
+
+   Related field observation (0.19.0, charging allowed): with a steady
+   setpoint of 7 the car sat at ~7 A but spiked to 13-16 A for a few seconds
+   roughly every 25-30 s, the meter rising with it. So non-zero setpoints do
+   not hold steadily either. Needed to explain it: a `tools/sniff.py` capture
+   showing our `controller/.../current` messages against the charger's 1 Hz
+   `update` around a spike.
 3. **`State` enum.** Field report (2026-09, add-on 0.17.2, car plugged in)
    saw five values. Meanings are inferred, not confirmed:
 
