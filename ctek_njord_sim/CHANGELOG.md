@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.1
+
+- No functional change. Fixed a test that failed about one run in twenty,
+  whenever its samples happened to straddle a minute boundary.
+
 ## 0.18.0
 
 - **Detects a second controller on the charger.** The logs from 0.17.2 showed

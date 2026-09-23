@@ -164,7 +164,10 @@ def test_blocked_spans_reach_the_live_series(data_dir):
     start = time.time() - 10
     for i in range(10):
         h.add(start + i, [4.0] * 3, [0.0] * 3, 0, blocked=5 <= i < 8)
-    assert h.series(30)["blocked"] == [False] * 5 + [True] * 3 + [False] * 2
+    # Straight off the live tier: series() may pick the minute tier instead
+    # when these ten samples happen to straddle a minute boundary.
+    assert History._pack(list(h.live), "1s")["blocked"] == (
+        [False] * 5 + [True] * 3 + [False] * 2)
 
 
 def test_a_minute_blocked_at_all_is_blocked_after_a_restart(data_dir):
