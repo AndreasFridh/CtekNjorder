@@ -141,27 +141,36 @@ def control_current_payload(amps: int) -> bytes:
     return str(int(amps)).encode()
 
 
-# How recent the charger's echo of its setpoint must be to be believed.
-ECHO_FRESH = 5.0
+# A car drawing at least this much against a 0 A pause is actually charging,
+# not idling. Cars were seen holding 0.3-1.1 A while waking; the legal minimum
+# for real charging is 6 A.
+PAUSE_BREACH = 2.5
+# Least time between two re-sends of a breached pause.
+PAUSE_RESEND_EVERY = 5.0
 
 
-def heartbeat_needed(setpoint: int, echoed, echo_age: float) -> bool:
+def resend_needed(setpoint: int, drawn: float, since_sent: float,
+                  heartbeat: bool) -> bool:
     """
-    On a heartbeat, does this setpoint have to be sent again?
+    Does an unchanged setpoint have to be sent again now?
 
-    Always, except for a pause the charger has already confirmed. Re-sending 0
-    to a charger that is paused appeared to make it go through the pause
-    again every heartbeat - the car could be heard starting and stopping every
-    15 s while charging was not allowed. Once `MaxAllowedCurrent` echoes 0 there
-    is nothing to refresh; should the charger ever report anything else, or
-    stop reporting, the next heartbeat sends 0 again.
+    A current is refreshed on every heartbeat, because the charger's
+    behaviour on controller silence is unknown.
 
-    Non-zero setpoints are left exactly as they were: the charger's behaviour
-    on controller silence is unknown, so they keep being refreshed.
+    A pause is not. Every 0 we send makes the charger go through its pause
+    again: in the field, each heartbeat of 0 was followed by State 3, then 4,
+    then - two seconds later - 2, with the car waking. Every 15 s, for as long
+    as charging was not allowed; the car could be heard starting and stopping.
+    The charger does not echo the 0 in `MaxAllowedCurrent` either, so there is
+    no confirmation to wait for.
+
+    So a pause goes out once, and again only on evidence that it is not being
+    honoured: the car drawing real current. That reacts within seconds, which
+    is faster than the heartbeat ever did.
     """
     if setpoint != 0:
-        return True
-    return not (echoed == 0 and echo_age <= ECHO_FRESH)
+        return heartbeat
+    return drawn >= PAUSE_BREACH and since_sent >= PAUSE_RESEND_EVERY
 
 
 class ForeignCommands:

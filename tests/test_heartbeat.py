@@ -1,37 +1,44 @@
 """
-Which setpoints the heartbeat re-sends.
+Which setpoints get sent again, and spotting a second controller.
 
-Re-sending 0 A to a charger that had already paused was heard as the car
-starting and stopping every heartbeat while charging was not allowed.
+Re-sending 0 A to a paused charger was heard as the car starting and stopping
+every heartbeat while charging was not allowed.
 """
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ctek_njord_sim"))
 
-from app.protocol import ECHO_FRESH, heartbeat_needed  # noqa: E402
+from app.protocol import (  # noqa: E402
+    PAUSE_BREACH, PAUSE_RESEND_EVERY, resend_needed,
+)
 
 
-def test_a_confirmed_pause_is_not_sent_again():
-    assert not heartbeat_needed(0, echoed=0, echo_age=1.0)
-    assert not heartbeat_needed(0, echoed=0.0, echo_age=1.0)
+def test_an_idle_pause_is_never_repeated():
+    # The field report: every repeated 0 was followed by State 3, 4, then 2 -
+    # the car starting and stopping on each heartbeat. Idle draw while a car
+    # wakes was 0.3-1.1 A, which must not count as charging.
+    for drawn in (0.0, 0.5, 1.1):
+        assert not resend_needed(0, drawn, since_sent=60.0, heartbeat=True)
 
 
-def test_a_pause_the_charger_has_not_confirmed_is_sent_again():
-    assert heartbeat_needed(0, echoed=6, echo_age=1.0)
-    assert heartbeat_needed(0, echoed=None, echo_age=1.0)
+def test_a_pause_the_car_charges_through_is_sent_again():
+    assert resend_needed(0, PAUSE_BREACH, since_sent=PAUSE_RESEND_EVERY,
+                         heartbeat=False), "must not wait for the heartbeat"
+    assert resend_needed(0, 16.0, since_sent=60.0, heartbeat=False)
 
 
-def test_a_stale_echo_is_not_trusted():
-    assert heartbeat_needed(0, echoed=0, echo_age=ECHO_FRESH + 1)
-    assert heartbeat_needed(0, echoed=0, echo_age=float("inf"))
+def test_a_breached_pause_is_not_sent_every_tick():
+    assert not resend_needed(0, 16.0, since_sent=PAUSE_RESEND_EVERY - 1,
+                             heartbeat=True)
 
 
-def test_a_charging_setpoint_is_always_refreshed():
+def test_a_charging_setpoint_is_refreshed_on_the_heartbeat_only():
     # The charger's behaviour on controller silence is unknown, so a current
-    # it is actually using keeps being refreshed exactly as before.
-    assert heartbeat_needed(10, echoed=10, echo_age=1.0)
-    assert heartbeat_needed(6, echoed=6, echo_age=0.0)
+    # it is using keeps being refreshed exactly as before.
+    assert resend_needed(10, 10.0, since_sent=15.0, heartbeat=True)
+    assert resend_needed(6, 0.0, since_sent=15.0, heartbeat=True)
+    assert not resend_needed(10, 10.0, since_sent=3.0, heartbeat=False)
 
 
 # ---------- a second controller on the same charger ----------

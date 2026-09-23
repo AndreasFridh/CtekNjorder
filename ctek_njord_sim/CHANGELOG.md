@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.19.0
+
+- **A pause is sent once, not every 15 s.** With the Nanogrid Air unplugged
+  the car still started and stopped over and over while charging was not
+  allowed. The logs show why: every 0 A the add-on sent was followed by the
+  charger going through State 3, then 4 (paused), then - two seconds later -
+  back to 2 with the car waking. The heartbeat repeated the 0 every 15 s, so
+  the cycle repeated every 15 s. 0.17.2 meant to stop repeating a confirmed
+  pause, but this charger never confirms one: `MaxAllowedCurrent` stays at
+  16. A pause now goes out once, and again only if the car is seen drawing
+  real current (2.5 A or more) through it, which is also a faster reaction
+  than the old 15 s heartbeat. A current the car is using is still refreshed
+  on every heartbeat.
+- A warning is logged whenever a car draws current through a pause - the
+  evidence that the charger does not hold a lone 0.
+- `tools/mock_charger.py --pause-lapses SECONDS` simulates a charger whose
+  pause lapses back to full current, to exercise that path offline.
+
 ## 0.18.1
 
 - No functional change. Fixed a test that failed about one run in twenty,

@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import random
+import time
 
 import paho.mqtt.client as mqtt
 from amqtt.broker import Broker
@@ -54,8 +55,14 @@ class Car:
 
 
 class MockCharger:
-    def __init__(self, host, port, car_wants, serial=DEFAULT_SERIAL):
+    def __init__(self, host, port, car_wants, serial=DEFAULT_SERIAL,
+                 pause_lapses=None):
         self.host, self.port = host, port
+        # Worst case of a field report: a 0 A pause held only ~2 s before the
+        # charger went back to charging. Simulated here as reverting to the
+        # full rating, so the add-on's defence against that can be exercised.
+        self.pause_lapses = pause_lapses
+        self._paused_at = None
         self.serial = serial
         self.t_station_cfg = f"ctek/ng-v2/client/{serial}/configuration"
         self.t_outlet_cfg = f"ctek/ng-v2/client/{serial}/1/configuration"
@@ -92,6 +99,8 @@ class MockCharger:
             return
         if amps != self.setpoint:
             self.log.info(">>> SETPOINT %s -> %s A", self.setpoint, amps)
+        if amps == 0:
+            self._paused_at = time.monotonic()      # every 0 restarts the pause
         self.setpoint = amps
 
     async def run(self):
@@ -103,6 +112,9 @@ class MockCharger:
             t += dt
             # Before any controller speaks, the charger sits at its minimum.
             allowed = MIN_ALLOWED if self.setpoint is None else self.setpoint
+            if (allowed == 0 and self.pause_lapses is not None
+                    and time.monotonic() - self._paused_at > self.pause_lapses):
+                allowed = FUSE_RATING
             self.car.step(allowed, dt)
             phases = self.car.phases()
 
@@ -137,6 +149,9 @@ async def main():
                     help="amps the car would draw if unrestricted - set this "
                          "below 16 to simulate a car with an onboard limit")
     ap.add_argument("--serial", default=DEFAULT_SERIAL)
+    ap.add_argument("--pause-lapses", type=float, default=None, metavar="SECONDS",
+                    help="a 0 A pause holds only this long before the charger "
+                         "goes back to full current (default: holds for ever)")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO,
@@ -153,7 +168,8 @@ async def main():
         "broker on %s:%s as charger %s (car wants %.0f A)",
         args.host, args.port, args.serial, args.car_wants)
 
-    await MockCharger(args.host, args.port, args.car_wants, args.serial).run()
+    await MockCharger(args.host, args.port, args.car_wants, args.serial,
+                      pause_lapses=args.pause_lapses).run()
 
 
 if __name__ == "__main__":

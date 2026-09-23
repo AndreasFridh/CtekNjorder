@@ -188,8 +188,13 @@ then throttle against the wrong phase. `PrimaryPhase: 1` and
    reports any setpoint it did not send. Whether a lone `0` holds is still
    unconfirmed.
 
-   Implication for `MaxAllowedCurrent`: it reflects whichever controller spoke
-   last, not necessarily us.
+   Unplugging the Nanogrid Air did **not** stop it, so that was not the
+   cause. What the logs show is every `0` being followed by `State` 3 → 4 →
+   (~2 s) → 2, i.e. **each `0` starts a fresh pause sequence**, and
+   `MaxAllowedCurrent` never shows the `0` (nor a commanded `6`). Since 0.19.0
+   a `0` is sent once and repeated only if the car draws ≥ 2.5 A through it.
+   Still open: does a lone `0` hold, or does the charger resume charging
+   after it?
 3. **`State` enum.** Field report (2026-09, add-on 0.17.2, car plugged in)
    saw five values. Meanings are inferred, not confirmed:
 

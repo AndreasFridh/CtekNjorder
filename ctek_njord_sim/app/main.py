@@ -47,7 +47,7 @@ from .hass import HassClient
 from .netmon import LinkMonitor
 from .history import History
 from .optionspec import LIVE_KEYS
-from .protocol import PHASE_ROTATIONS, heartbeat_needed
+from .protocol import PHASE_ROTATIONS, resend_needed
 from .regulator import Regulator
 from .sessions import SessionLog
 from .web import WebUI
@@ -143,6 +143,7 @@ class Service:
         self.last_error: str | None = None
         self._last_control = 0.0
         self._published: dict[str, int] = {}
+        self._sent_at: dict[str, float] = {}
         self._reported: dict[str, tuple] = {}
         self._last_meter = 0.0
         self._last_status = 0.0
@@ -396,9 +397,9 @@ class Service:
             self.cars_drawing = any(
                 self.allocation.get(d.id, 0) > 0 and d.wants for d in demands)
 
-            # Per charger: a change is sent at once, and the heartbeat refreshes
-            # what is unchanged - except a pause the charger has confirmed,
-            # which re-sending restarts (see `heartbeat_needed`).
+            # Per charger: a change is sent at once. An unchanged current is
+            # refreshed on the heartbeat; an unchanged pause only if the car
+            # is seen charging through it (see `resend_needed`).
             heartbeat = (now - self._last_control) >= opts.control_interval
             # A charger that dropped off may have lost what we last told it.
             for client in self.clients:
@@ -407,11 +408,17 @@ class Service:
             for client in bound:
                 sp = self.allocation.get(client.id, 0)
                 st = states[client.id]
-                if sp != self._published.get(client.id) or (
-                        heartbeat and heartbeat_needed(
-                            sp, st["max_allowed_current"], st["age"])):
-                    client.publish_setpoint(sp)
-                    self._published[client.id] = sp
+                drawn = max(st["current"]) if st["current"] else 0.0
+                since = now - self._sent_at.get(client.id, -1e9)
+                changed_here = sp != self._published.get(client.id)
+                if not changed_here and not resend_needed(sp, drawn, since, heartbeat):
+                    continue
+                if not changed_here and sp == 0:
+                    _LOG.warning("[%s] car drawing %.1fA through a 0A pause - "
+                                 "sending 0 again", client.name, drawn)
+                client.publish_setpoint(sp)
+                self._published[client.id] = sp
+                self._sent_at[client.id] = now
             if heartbeat:
                 self._last_control = now
             self._log_charger_changes(bound, states)
