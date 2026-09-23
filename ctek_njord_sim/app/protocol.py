@@ -139,6 +139,29 @@ def control_current_payload(amps: int) -> bytes:
     return str(int(amps)).encode()
 
 
+# How recent the charger's echo of its setpoint must be to be believed.
+ECHO_FRESH = 5.0
+
+
+def heartbeat_needed(setpoint: int, echoed, echo_age: float) -> bool:
+    """
+    On a heartbeat, does this setpoint have to be sent again?
+
+    Always, except for a pause the charger has already confirmed. Re-sending 0
+    to a charger that is paused appeared to make it go through the pause
+    again every heartbeat - the car could be heard starting and stopping every
+    15 s while charging was not allowed. Once `MaxAllowedCurrent` echoes 0 there
+    is nothing to refresh; should the charger ever report anything else, or
+    stop reporting, the next heartbeat sends 0 again.
+
+    Non-zero setpoints are left exactly as they were: the charger's behaviour
+    on controller silence is unknown, so they keep being refreshed.
+    """
+    if setpoint != 0:
+        return True
+    return not (echoed == 0 and echo_age <= ECHO_FRESH)
+
+
 def parse_outlet_update(payload: dict) -> dict:
     """Normalise the charger's 1 Hz status message."""
     return {

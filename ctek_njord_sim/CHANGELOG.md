@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.17.2
+
+- **Fixed (probably): the car starting and stopping over and over while
+  charging is not allowed.** The add-on held a steady 0 A, but re-sent that
+  0 A every 15 s (the heartbeat) - and a charger that has already paused
+  appears to go through its pause again each time, waking the car. A pause
+  the charger has confirmed (`MaxAllowedCurrent` 0) is no longer re-sent. If
+  the charger ever reports anything else, or stops reporting, 0 A goes out
+  again on the next heartbeat. Current the car is actually using is refreshed
+  exactly as before.
+- Each charger's setpoint is now sent only when *its own* value changes, not
+  whenever any charger's does.
+- **New info-level log line** whenever a charger's reported `State`,
+  `MaxAllowedCurrent`, or whether the car is drawing, changes. This is the
+  evidence needed to confirm the fix and to learn what `State` values mean.
+
 ## 0.17.1
 
 - **Fixed: a car being plugged in could go unnoticed.** A plug-in shows up as a

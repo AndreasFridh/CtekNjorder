@@ -47,7 +47,7 @@ from .hass import HassClient
 from .netmon import LinkMonitor
 from .history import History
 from .optionspec import LIVE_KEYS
-from .protocol import PHASE_ROTATIONS
+from .protocol import PHASE_ROTATIONS, heartbeat_needed
 from .regulator import Regulator
 from .sessions import SessionLog
 from .web import WebUI
@@ -142,6 +142,8 @@ class Service:
         self.last_step_at: float | None = None
         self.last_error: str | None = None
         self._last_control = 0.0
+        self._published: dict[str, int] = {}
+        self._reported: dict[str, tuple] = {}
         self._last_meter = 0.0
         self._last_status = 0.0
 
@@ -389,10 +391,25 @@ class Service:
             self.allocation = settled
             self.alloc_reason = allocation.reason
 
-            if changed or (now - self._last_control) >= opts.control_interval:
-                for client in bound:
-                    client.publish_setpoint(self.allocation.get(client.id, 0))
+            # Per charger: a change is sent at once, and the heartbeat refreshes
+            # what is unchanged - except a pause the charger has confirmed,
+            # which re-sending restarts (see `heartbeat_needed`).
+            heartbeat = (now - self._last_control) >= opts.control_interval
+            # A charger that dropped off may have lost what we last told it.
+            for client in self.clients:
+                if client not in bound:
+                    self._published.pop(client.id, None)
+            for client in bound:
+                sp = self.allocation.get(client.id, 0)
+                st = states[client.id]
+                if sp != self._published.get(client.id) or (
+                        heartbeat and heartbeat_needed(
+                            sp, st["max_allowed_current"], st["age"])):
+                    client.publish_setpoint(sp)
+                    self._published[client.id] = sp
+            if heartbeat:
                 self._last_control = now
+            self._log_charger_changes(bound, states)
 
             # Every charger runs its own broker, so meter data goes to each.
             if current and (now - self._last_meter) >= opts.meter_interval:
@@ -432,6 +449,27 @@ class Service:
                     [round(c, 1) for c in total_car],
                     decision.setpoint, per, allocation.reason,
                 )
+
+    def _log_charger_changes(self, bound, states) -> None:
+        """
+        Log every change in what a charger reports about itself.
+
+        Only `State` 2 is understood, and nothing but this shows how the real
+        charger and car react to what we command - a pause, a restart, a car
+        waking up. One line per change, so it stays readable at info level.
+        """
+        for client in bound:
+            st = states[client.id]
+            drawn = max(st["current"]) if st["current"] else 0.0
+            seen = (st["state"], st["max_allowed_current"],
+                    drawn > self.demand.DRAWING_THRESHOLD)
+            if seen != self._reported.get(client.id):
+                self._reported[client.id] = seen
+                _LOG.info(
+                    "[%s] charger reports State=%s MaxAllowedCurrent=%s, "
+                    "car drawing %.1fA (we command %sA)",
+                    client.name, st["state"], st["max_allowed_current"], drawn,
+                    self.allocation.get(client.id, 0))
 
     # ---------- state for the web UI ----------
 

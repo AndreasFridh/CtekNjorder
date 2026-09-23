@@ -174,7 +174,12 @@ then throttle against the wrong phase. `PrimaryPhase: 1` and
    Not yet observed — the adapter never went silent for long enough. Until this
    is known, treat our add-on crashing as *unsafe* and keep the watchdog.
 2. **Is `0` accepted** to pause charging, and are non-integers accepted?
-   Only `6` and `16` have been observed.
+   Only `6` and `16` have been observed in a capture. Field report
+   (2026-09, add-on 0.17.1): with `0` re-published every 15 s the car was
+   heard starting and stopping repeatedly, drawing ~0.7 A in bursts. Suspected
+   cause: each repeated `0` restarts the charger's pause. Since 0.17.2 a `0`
+   is not repeated once `MaxAllowedCurrent` echoes it. Unconfirmed until a
+   capture shows the charger echoing `0`, and what `State` does meanwhile.
 3. **`State` enum.** Only `2` (charging) seen. Idle/connected/finished/fault
    values unknown.
 4. **Does the charger require `adapterinfo`** before honouring a setpoint, or is
