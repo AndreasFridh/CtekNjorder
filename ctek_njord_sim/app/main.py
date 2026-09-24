@@ -598,15 +598,6 @@ class Service:
                 # "ready, N A available" instead of implying something is wrong.
                 "available": spare,
                 "believed_empty": self.demand.believed_empty(client.id),
-                # Someone else's setpoint on our control topic, within the last
-                # two minutes - see protocol.ForeignCommands.
-                # Last time the car was seen drawing well over its setpoint.
-                "overdraw_age": (round(time.time() - self.overdraw[client.id])
-                                 if client.id in self.overdraw else None),
-                "foreign_command": (
-                    st["foreign_value"]
-                    if st["foreign_age"] is not None and st["foreign_age"] < 120
-                    and not self.opts.dry_run else None),
                 "age": None if st["age"] == float("inf") else round(st["age"], 1),
             })
 

@@ -208,11 +208,11 @@ class ForeignCommands:
     Tells our own setpoints apart from anyone else's on the control topic.
 
     The broker echoes our publishes back to us, so a value we did not send
-    recently is someone else's - in practice a Nanogrid Air that is still
-    plugged in. Two controllers on one charger fight: ours said 0 A, it said
-    16 A a couple of seconds later, and the car started and stopped every
-    heartbeat. The charger gives no other sign of it; its `MaxAllowedCurrent`
-    simply showed the other controller's value throughout.
+    recently is someone else's. In the field that turned out to be the
+    charger itself, answering our meter data with its own setpoint - first
+    suspected to be a Nanogrid Air, which would look identical. Either way
+    the charger obeys whichever arrived last, and gives no other sign: its
+    `MaxAllowedCurrent` showed 16 throughout.
     """
 
     ECHO_WINDOW = 5.0

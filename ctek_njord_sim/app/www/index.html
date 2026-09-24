@@ -360,13 +360,6 @@ function renderBanners(s) {
       `${Math.max(1, Math.round(c.overdraw_age / 60))} min. The charger is overriding ` +
       'this add-on, so load balancing cannot be relied on. See the add-on log.');
   });
-  (s.chargers || []).filter(c => c.foreign_command != null).forEach(c => {
-    out += banner('bad',
-      `<b>Something else is commanding ${esc(c.name)}.</b>&nbsp;` +
-      `A ${esc(c.foreign_command)} A setpoint arrived that this add-on did not send - ` +
-      'from a Nanogrid Air, a second copy of this add-on, or the charger itself. ' +
-      'The add-on log lists each one and when it arrived.');
-  });
   if (s.dry_run)
     out += banner('warn', '<b>Dry run.</b>&nbsp;Decisions are logged but nothing is sent to the charger. Turn this off under Settings once you are happy — and block the Nanogrid Air first, or the two will fight.');
   // Distinguish "never answered" - most likely an address for a charger that

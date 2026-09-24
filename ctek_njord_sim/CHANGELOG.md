@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.20.2
+
+- Removed the red "Something else is commanding" banner and its recurring log
+  warning. The foreign setpoints turned out to be the charger's own load
+  balancing, which is expected and has been countered since 0.20.0, so the
+  banner only raised alarm over nothing. What does matter - the car actually
+  drawing more than it is allowed - still has its own banner, "not holding
+  its setpoint".
+- A change in the charger's own setpoint is still logged at info.
+
 ## 0.20.1
 
 - No functional change. `PROTOCOL.md` records that 0.20.0 stopped the

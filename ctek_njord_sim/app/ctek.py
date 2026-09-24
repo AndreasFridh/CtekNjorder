@@ -84,9 +84,6 @@ class ChargerState:
                 "energy": self.energy,
                 "power": self.power,
                 "age": time.time() - self.updated_at if self.updated_at else float("inf"),
-                "foreign_value": self.foreign.last_value,
-                "foreign_age": (time.time() - self.foreign.last_at
-                                if self.foreign.last_at else None),
             }
 
 
@@ -123,7 +120,6 @@ class CtekClient:
         self.topics: Topics | None = None
         self._announced = False
         self._last_reconnect = 0.0
-        self._foreign_warned = -1e9
         self._sent_value: int | None = None
         self._sent_at = 0.0
         self._clients_seen: str | None = None
@@ -337,16 +333,15 @@ class CtekClient:
             self._sent_value, self._sent_at = amps, time.time()
         self._publish(self.topics.control_current, protocol.control_current_payload(amps))
 
-    FOREIGN_WARN_EVERY = 300.0
-
     def _heard_command(self, value) -> None:
         """
         A setpoint on our control topic that we may not have sent.
 
-        Every foreign one is logged, not a sample: what matters is WHEN they
-        arrive relative to our own. A fixed delay after each of our commands
-        means the charger itself answers them; a schedule of its own means
-        another controller - see PROTOCOL.md.
+        In practice the charger's own load balancing, answering each meterdata
+        message we publish - expected, and countered when it asks for more
+        than we allow (see `protocol.should_reassert` and PROTOCOL.md). Its
+        timing relative to our own commands is logged, since that is what
+        told it apart from a second controller.
         """
         now = time.time()
         with self.state._lock:
@@ -358,7 +353,7 @@ class CtekClient:
         else:
             after = f"{now - self._sent_at:.1f}s after our last command ({self._sent_value}A)"
         if self.dry_run:
-            _LOG.info("[%s] foreign setpoint %sA, %s (dry run: expected)",
+            _LOG.debug("[%s] foreign setpoint %sA, %s (dry run: expected)",
                       self.name, value, after)
             return
 
@@ -377,11 +372,3 @@ class CtekClient:
                           protocol.control_current_payload(self._sent_value))
             _LOG.debug("[%s] re-asserted %sA over foreign %sA",
                        self.name, self._sent_value, value)
-
-        if now - self._foreign_warned >= self.FOREIGN_WARN_EVERY:
-            self._foreign_warned = now
-            _LOG.warning(
-                "[%s] the charger is also receiving setpoints this add-on did not "
-                "send (%sA) - apparently its own load balancing, answering our "
-                "meter data. Any higher than ours are overridden at once.",
-                self.name, value)
