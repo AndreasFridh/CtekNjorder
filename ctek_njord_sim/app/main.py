@@ -28,9 +28,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import signal
 import sys
 import time
+import unicodedata
 
 from .allocator import (
     ChargerDemand, DemandTracker, allocate, apply_dwell,
@@ -719,39 +721,81 @@ class Service:
         gate = self.hass.state(self.opts.charge_enable_entity)
         return self.cars_drawing and gate_explicitly_on(gate)
 
+    @staticmethod
+    def _slug(name: str) -> str:
+        """An entity-id fragment from a charger's name: 'Garage' -> 'garage'."""
+        ascii_name = (unicodedata.normalize("NFKD", name)
+                      .encode("ascii", "ignore").decode())
+        return re.sub(r"[^a-z0-9]+", "_", ascii_name.lower()).strip("_")
+
+    def ha_entities(self) -> dict[str, tuple[str, dict]]:
+        """
+        Everything this add-on shows in Home Assistant, as entity -> (state, attrs).
+
+        Power and energy come straight from the charger's own `info` message.
+        The energy counter is lifetime and only ever rises, which is what the
+        Energy dashboard wants (`total_increasing`); a charger reboot that
+        resets it is handled by Home Assistant as a new cycle.
+        """
+        low = self.low_price_charging()
+        out = {
+            LOW_PRICE_ENTITY: ("on" if low else "off", {
+                "friendly_name": "Charging Active Due to Low Price",
+                "icon": "mdi:ev-station" if low else "mdi:ev-plug-type2",
+                "gate_entity": self.opts.charge_enable_entity or None,
+                "gate_state": (self.hass.state(self.opts.charge_enable_entity)
+                               if self.opts.charge_enable_entity else None),
+                "car_charging": self.cars_drawing,
+            }),
+        }
+        for client in self.clients:
+            slug = self._slug(client.name) or client.id
+            st = client.state.snapshot()
+            online = client.topics is not None and client.connected.is_set()
+            power, energy = st["power"], st["energy"]
+            out[f"sensor.ctek_njorder_{slug}_power"] = (
+                str(int(power)) if online and power is not None else "unavailable", {
+                    "friendly_name": f"{client.name} charging power",
+                    "unit_of_measurement": "W",
+                    "device_class": "power",
+                    "state_class": "measurement",
+                    "icon": "mdi:ev-station",
+                })
+            out[f"sensor.ctek_njorder_{slug}_energy"] = (
+                f"{energy / 1000.0:.3f}" if online and energy is not None
+                else "unavailable", {
+                    "friendly_name": f"{client.name} energy",
+                    "unit_of_measurement": "kWh",
+                    "device_class": "energy",
+                    "state_class": "total_increasing",
+                    "icon": "mdi:lightning-bolt",
+                })
+        return out
+
     async def ha_output_loop(self) -> None:
         """Keep the add-on's own entities in Home Assistant up to date."""
-        last: bool | None = None
-        last_post = retry_at = 0.0
+        last: dict[str, str] = {}
+        posted_at: dict[str, float] = {}
+        retry_at = 0.0
         while True:
             await asyncio.sleep(TICK)
-            value = self.low_price_charging()
             now = time.monotonic()
-            if value == last and now - last_post < HA_REFRESH:
-                continue
             if now < retry_at:
                 continue
-            try:
-                await supervisor.set_state(
-                    LOW_PRICE_ENTITY, "on" if value else "off",
-                    {
-                        "friendly_name": "Charging Active Due to Low Price",
-                        "icon": "mdi:ev-station" if value else "mdi:ev-plug-type2",
-                        "gate_entity": self.opts.charge_enable_entity or None,
-                        "gate_state": (self.hass.state(self.opts.charge_enable_entity)
-                                       if self.opts.charge_enable_entity else None),
-                        "car_charging": self.cars_drawing,
-                    },
-                )
-            except Exception as exc:                     # noqa: BLE001
-                # Retried on the next tick; the output is informational and
-                # must never get in the way of control.
-                _LOG.debug("could not publish %s: %s", LOW_PRICE_ENTITY, exc)
-                retry_at = now + 30.0
-                continue
-            if value != last:
-                _LOG.info("%s -> %s", LOW_PRICE_ENTITY, "on" if value else "off")
-            last, last_post = value, now
+            for eid, (state, attrs) in self.ha_entities().items():
+                if state == last.get(eid) and now - posted_at.get(eid, -1e9) < HA_REFRESH:
+                    continue
+                try:
+                    await supervisor.set_state(eid, state, attrs)
+                except Exception as exc:                 # noqa: BLE001
+                    # Retried later; the output is informational and must
+                    # never get in the way of control.
+                    _LOG.debug("could not publish %s: %s", eid, exc)
+                    retry_at = now + 30.0
+                    break
+                if eid == LOW_PRICE_ENTITY and state != last.get(eid):
+                    _LOG.info("%s -> %s", eid, state)
+                last[eid], posted_at[eid] = state, now
 
     # ---------- lifecycle ----------
 

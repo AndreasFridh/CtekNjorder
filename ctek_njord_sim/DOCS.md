@@ -178,6 +178,24 @@ Its attributes carry the gate entity, the gate's state and whether a car is
 charging. The entity is re-posted every minute, so it reappears shortly after
 Home Assistant restarts.
 
+### Power and energy
+
+For each charger the add-on also publishes, named after the charger
+(`Garage` → `garage`):
+
+| Entity | Unit | What |
+|---|---|---|
+| `sensor.ctek_njorder_garage_power` | W | Charging power right now, from the charger itself |
+| `sensor.ctek_njorder_garage_energy` | kWh | The charger's lifetime energy counter |
+
+The energy sensor is `total_increasing` with device class `energy`, so it can
+be added to the **Energy dashboard** as an individual device. Both come from
+the charger every 10 s and read `unavailable` while it is offline.
+
+Like the low-price entity these are posted by the add-on rather than created
+by an integration: they cannot be renamed in the UI, and after a Home
+Assistant restart they take up to a minute to reappear.
+
 ## What charging costs
 
 **Electricity price** takes an entity carrying the current price per kWh. With

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.21.0
+
+- **Charging power and energy in Home Assistant.** For each charger, named
+  after it: `sensor.ctek_njorder_<name>_power` (W) and
+  `sensor.ctek_njorder_<name>_energy` (kWh, the charger's lifetime counter).
+  The energy sensor is `total_increasing` / `energy`, so it can go straight
+  into the Energy dashboard. Both come from the charger's own report every
+  10 s, and read `unavailable` while it is offline.
+- Entities are re-posted only when their value changes, plus once a minute so
+  they survive a Home Assistant restart.
+
 ## 0.20.3
 
 - **A car waking up is no longer recorded as a charging session.** While the
