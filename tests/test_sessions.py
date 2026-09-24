@@ -202,3 +202,19 @@ def test_a_failing_log_does_not_break_the_session_tracker():
     t.update(10.0, "a", drawn=10.0, energy_counter=100, price=1.0)
     t.update(10.0 + t.IDLE_GRACE + 1, "a", drawn=0.0, energy_counter=100, price=1.0)
     assert t.session_for("a") is None, "the session still closed cleanly"
+
+
+def test_blips_recorded_by_older_versions_are_dropped_on_load(data_dir):
+    path = os.path.join(data_dir, "sessions.jsonl")
+    now = time.time()
+    with open(path, "w") as f:
+        f.write(json.dumps({"started": now - 900, "energy_kwh": 0.0,
+                            "peak_current": 0.6}) + "\n")
+        f.write(json.dumps({"started": now - 600, "energy_kwh": 7.5,
+                            "peak_current": 16.0}) + "\n")
+    log = SessionLog(data_dir)
+    assert [r["energy_kwh"] for r in log.sessions] == [7.5]
+    # ...and dropped from the file too, not just from memory.
+    assert len(SessionLog(data_dir).sessions) == 1
+    with open(path) as f:
+        assert len(f.read().splitlines()) == 1

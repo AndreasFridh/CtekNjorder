@@ -141,6 +141,19 @@ class Session:
         }
 
 
+# Below both of these a "session" was a car waking up, not charging: it held
+# ~0.5 A for a few seconds while the charger kept it paused. Real charging
+# always reaches the legal minimum of 6 A, so the current test alone can never
+# throw a genuine session away, even with no energy counter to go on.
+TRIVIAL_KWH = 0.02
+TRIVIAL_PEAK_A = 6.0
+
+
+def is_trivial(energy_kwh: float, peak_current: float) -> bool:
+    """A session too small to be charging at all - not worth recording."""
+    return energy_kwh < TRIVIAL_KWH and peak_current < TRIVIAL_PEAK_A
+
+
 class CostTracker:
     """Follows each charger's current session and totals the cost."""
 
@@ -167,7 +180,7 @@ class CostTracker:
         if drawing and session is None:
             session = Session(started=now, _counter=energy_counter, _last_seen=now)
             self.active[cid] = session
-            _LOG.info("[%s] charging session started", cid)
+            _LOG.debug("[%s] charging session started", cid)
 
         if session is not None:
             # Elapsed time is not charging time: load balancing pauses a car
@@ -203,9 +216,13 @@ class CostTracker:
             last = self._drawing_since.get(cid, session.started)
             if now - last >= self.IDLE_GRACE:
                 session.ended = last
+                self.active.pop(cid, None)
+                if is_trivial(session.energy_wh / 1000.0, session.peak_current):
+                    _LOG.debug("[%s] discarded a %.1fA blip - a car waking, not "
+                               "a charging session", cid, session.peak_current)
+                    return
                 self.completed.setdefault(cid, []).append(session)
                 del self.completed[cid][:-self.KEEP_SESSIONS]
-                self.active.pop(cid, None)
                 _LOG.info("[%s] session ended: %.2f kWh, cost %.2f, %.0f min",
                           cid, session.energy_wh / 1000, session.cost,
                           session.duration / 60)

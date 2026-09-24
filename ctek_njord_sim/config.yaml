@@ -1,5 +1,5 @@
 name: CtekNjorder
-version: "0.20.2"
+version: "0.20.3"
 slug: ctek_njord_sim
 description: >-
   Replaces the CTEK Nanogrid Air. Impersonates the adapter on the charger's own

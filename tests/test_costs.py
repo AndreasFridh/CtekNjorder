@@ -172,3 +172,28 @@ def test_a_missing_or_unclear_gate_is_not_reported_as_low_price(state):
     # charging_allowed() says yes to these, but that is fail-open leniency,
     # not evidence that power is cheap.
     assert gate_explicitly_on(state) is False
+
+
+# ---------- a car waking is not a session ----------
+
+def test_a_car_waking_through_a_pause_is_not_recorded():
+    # Field log: the car held ~0.5 A for a few seconds while the charger kept
+    # it paused, and each blip was booked as a 0.00 kWh, 0 min session.
+    done = []
+    t = CostTracker(on_complete=lambda cid, s: done.append(s))
+    t.update(0.0, "a", drawn=0.6, energy_counter=1000, price=2.0)
+    t.update(5.0, "a", drawn=0.0, energy_counter=1000, price=2.0)
+    t.update(5.0 + t.IDLE_GRACE, "a", drawn=0.0, energy_counter=1000, price=2.0)
+    assert done == []
+    assert t.last_completed("a") is None
+    assert t.session_for("a") is None
+
+
+def test_real_charging_is_recorded_even_without_an_energy_counter():
+    # The current test alone must keep a genuine session.
+    done = []
+    t = CostTracker(on_complete=lambda cid, s: done.append(s))
+    t.update(0.0, "a", drawn=6.2, energy_counter=None, price=None)
+    t.update(30.0, "a", drawn=0.0, energy_counter=None, price=None)
+    t.update(30.0 + t.IDLE_GRACE, "a", drawn=0.0, energy_counter=None, price=None)
+    assert len(done) == 1

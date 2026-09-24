@@ -19,6 +19,8 @@ import os
 import time
 from collections import deque
 
+from .costs import is_trivial
+
 _LOG = logging.getLogger(__name__)
 
 KEEP = 500                 # sessions retained; years of daily charging
@@ -38,7 +40,7 @@ class SessionLog:
     def _load(self) -> None:
         if not self.path or not os.path.exists(self.path):
             return
-        rows, bad = [], 0
+        rows, bad, trivial = [], 0, 0
         try:
             with open(self.path, encoding="utf-8") as f:
                 for line in f:
@@ -48,7 +50,11 @@ class SessionLog:
                     try:
                         row = json.loads(line)
                         if isinstance(row, dict) and "started" in row:
-                            rows.append(row)
+                            if is_trivial(row.get("energy_kwh") or 0.0,
+                                          row.get("peak_current") or 0.0):
+                                trivial += 1
+                            else:
+                                rows.append(row)
                         else:
                             bad += 1
                     except Exception:
@@ -62,7 +68,11 @@ class SessionLog:
         self._appended = len(rows)
         _LOG.info("Restored %d charging sessions%s", len(self.sessions),
                   f" ({bad} unreadable lines skipped)" if bad else "")
-        if bad or self._appended > COMPACT_AT:
+        if trivial:
+            # Recorded before 0.20.3 while the charger kept waking the car.
+            _LOG.info("Dropped %d charging sessions that were a car waking, "
+                      "not charging", trivial)
+        if bad or trivial or self._appended > COMPACT_AT:
             self._compact()
 
     def _compact(self) -> None:

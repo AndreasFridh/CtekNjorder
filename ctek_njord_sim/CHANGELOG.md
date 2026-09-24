@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.20.3
+
+- **A car waking up is no longer recorded as a charging session.** While the
+  charger kept a car paused, the car would briefly hold ~0.5 A, and each blip
+  was booked as a "0.00 kWh, 0 min" session - cluttering the Sessions tab. A
+  session is now only kept if the car took at least 0.02 kWh or reached 6 A,
+  the legal minimum for real charging, so a genuine session is never lost
+  even without an energy counter. Blips already in the log are dropped once,
+  at startup.
+- "Charging session started" is logged at debug; the end of a real session,
+  with its energy and cost, is still logged at info.
+
 ## 0.20.2
 
 - Removed the red "Something else is commanding" banner and its recurring log
