@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.20.1
+
+- No functional change. `PROTOCOL.md` records that 0.20.0 stopped the
+  start-stop cycling on real hardware: the charger does not act on its own
+  setpoint when it is overridden within a fraction of a second.
+
 ## 0.20.0
 
 - **Found and countered the cause of the start-stop cycling and the 16 A

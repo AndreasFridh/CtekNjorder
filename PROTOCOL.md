@@ -106,6 +106,8 @@ Power in **kW** — note the charger's own `info.power` is in **W**.
 > overridden within seconds (the car restarted every cycle), and a steady `7`
 > overridden to `16` for a few seconds every ten. Since 0.20.0 the add-on
 > immediately re-sends its own setpoint whenever a higher foreign one arrives.
+> **Confirmed in the field (2026-09-24):** with that in place the start-stop
+> cycling stopped. A charger overridden for ~0.1-0.3 s does not act on it.
 
 **`ctek/ng-v2/controller/{CB}/1/current`** — every **12–15 s** ← **the control channel**
 ```
