@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.19.3
+
+- No change to the add-on. New `tools/find_nanogrid.py`, run from a computer on
+  the home network: sweeps the given subnets and flags anything that
+  identifies itself as CTEK / Nanogrid (hostname, web page, `ctek-ng-air.local`)
+  and every MQTT broker. With `--charger` it then prints every setpoint the
+  charger receives, with timestamps, to line foreign ones up against devices
+  being unplugged.
+
 ## 0.19.2
 
 Diagnostics for the charger resuming by itself while charging is not allowed.
