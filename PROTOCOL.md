@@ -202,6 +202,15 @@ then throttle against the wrong phase. `PrimaryPhase: 1` and
    not hold steadily either. Needed to explain it: a `tools/sniff.py` capture
    showing our `controller/.../current` messages against the charger's 1 Hz
    `update` around a spike.
+
+   Field log, 2026-09-24 (0.19.0, Nanogrid Air unplugged, charging blocked):
+   a **`16` appears on `controller/{CB}/1/current` that the add-on did not
+   send**, and every time the charger goes `State` 4 → 2 (resumes) 1-3 s
+   later. Cycle ≈ 20 s: our `0` → `State` 3 for 6-12 s → foreign `16` →
+   `State` 4 → `State` 2, car waking at ~0.5 A. The source is unknown:
+   either the charger publishes its default to the control topic as it
+   resets after a `0`, or another client on the broker does. 0.19.2 logs
+   each one with its delay after our last command to tell them apart.
 3. **`State` enum.** Field report (2026-09, add-on 0.17.2, car plugged in)
    saw five values. Meanings are inferred, not confirmed:
 

@@ -123,7 +123,10 @@ class CtekClient:
         self.topics: Topics | None = None
         self._announced = False
         self._last_reconnect = 0.0
-        self._foreign_logged = 0.0
+        self._foreign_warned = -1e9
+        self._sent_value: int | None = None
+        self._sent_at = 0.0
+        self._clients_seen: str | None = None
 
         cid = f"ctek-ha-sim-{uuid.uuid4().hex[:8]}"
         self._c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=cid,
@@ -196,6 +199,8 @@ class CtekClient:
 
         for t in self.topics.subscriptions():
             self._c.subscribe(t, qos=0)
+        # Diagnostic only; many small brokers publish nothing here.
+        self._c.subscribe("$SYS/broker/clients/connected", qos=0)
         self.announce()
 
     def ensure_connected(self) -> None:
@@ -221,6 +226,14 @@ class CtekClient:
 
     def _on_message(self, client, userdata, msg):
         topic = msg.topic
+        if topic.startswith("$SYS/"):
+            # How many clients the broker has. More than us (and the charger's
+            # own, if it counts) means someone else is connected.
+            text = msg.payload.decode("utf-8", "replace").strip()
+            if text != self._clients_seen:
+                self._clients_seen = text
+                _LOG.info("[%s] broker reports %s = %s", self.name, topic, text)
+            return
         try:
             payload = json.loads(msg.payload.decode("utf-8"))
         except Exception:
@@ -317,25 +330,42 @@ class CtekClient:
         if not self.dry_run:
             with self.state._lock:
                 self.state.foreign.sent(time.time(), amps)
+            (_LOG.info if amps != self._sent_value else _LOG.debug)(
+                "[%s] sent setpoint %sA", self.name, amps)
+            self._sent_value, self._sent_at = amps, time.time()
         self._publish(self.topics.control_current, protocol.control_current_payload(amps))
 
-    FOREIGN_LOG_EVERY = 60.0
+    FOREIGN_WARN_EVERY = 300.0
 
     def _heard_command(self, value) -> None:
+        """
+        A setpoint on our control topic that we may not have sent.
+
+        Every foreign one is logged, not a sample: what matters is WHEN they
+        arrive relative to our own. A fixed delay after each of our commands
+        means the charger itself answers them; a schedule of its own means
+        another controller - see PROTOCOL.md.
+        """
+        now = time.time()
         with self.state._lock:
-            foreign = self.state.foreign.seen(time.time(), value)
+            foreign = self.state.foreign.seen(now, value)
         if not foreign:
             return
-        now = time.time()
-        if now - self._foreign_logged < self.FOREIGN_LOG_EVERY:
-            return
-        self._foreign_logged = now
-        if self.dry_run:
-            _LOG.info("[%s] another controller is commanding %sA (dry run: "
-                      "expected, it is still in charge)", self.name, value)
+        if self._sent_value is None:
+            after = "before we have sent anything"
         else:
+            after = f"{now - self._sent_at:.1f}s after our last command ({self._sent_value}A)"
+        if self.dry_run:
+            _LOG.info("[%s] foreign setpoint %sA, %s (dry run: expected)",
+                      self.name, value, after)
+            return
+        _LOG.info("[%s] foreign setpoint %sA on our control topic, %s",
+                  self.name, value, after)
+        if now - self._foreign_warned >= self.FOREIGN_WARN_EVERY:
+            self._foreign_warned = now
             _LOG.warning(
-                "[%s] ANOTHER CONTROLLER is commanding this charger (%sA, not "
-                "sent by us) - almost certainly the Nanogrid Air. Unplug it: "
-                "two controllers fight, and the car starts and stops.",
-                self.name, value)
+                "[%s] something other than this add-on is commanding the charger "
+                "(%sA). Either another controller is connected to its broker - a "
+                "Nanogrid Air, or a second copy of this add-on - or the charger "
+                "publishes it itself. The 'foreign setpoint' lines show which: "
+                "see their timing.", self.name, value)

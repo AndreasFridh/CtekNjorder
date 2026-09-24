@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.19.2
+
+Diagnostics for the charger resuming by itself while charging is not allowed.
+
+- The logs from 0.19.1 show a **16 A setpoint arriving on the control topic
+  that this add-on did not send**, with the Nanogrid Air unplugged, and the
+  charger resuming 1-3 s later every time. Either the charger publishes it
+  itself as it resets, or something else on its broker does. Their timing
+  tells the two apart, so every foreign setpoint is now logged (it was one a
+  minute) with how long after our own last command it arrived.
+- Each change of our own setpoint is logged at info.
+- If the charger's broker publishes `$SYS/broker/clients/connected`, the count
+  is logged - more clients than expected means another controller.
+- The warning and banner no longer insist it is the Nanogrid Air.
+
 ## 0.19.1
 
 - **Fixed: the allowance could get stuck low for good.** A car that took only
