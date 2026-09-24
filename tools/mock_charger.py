@@ -56,12 +56,17 @@ class Car:
 
 class MockCharger:
     def __init__(self, host, port, car_wants, serial=DEFAULT_SERIAL,
-                 pause_lapses=None):
+                 pause_lapses=None, self_balance=False):
         self.host, self.port = host, port
         # Worst case of a field report: a 0 A pause held only ~2 s before the
         # charger went back to charging. Simulated here as reverting to the
         # full rating, so the add-on's defence against that can be exercised.
         self.pause_lapses = pause_lapses
+        # Field log: the real charger answers every meterdata message with a
+        # setpoint of its own on the control topic - 6 A at first, 16 A after
+        # about a minute - and obeys whichever setpoint arrived last.
+        self.self_balance = self_balance
+        self._first_meter = None
         self._paused_at = None
         self.serial = serial
         self.t_station_cfg = f"ctek/ng-v2/client/{serial}/configuration"
@@ -82,6 +87,7 @@ class MockCharger:
     def _on_connect(self, c, u, flags, rc, props=None):
         self.log.info("charger client connected (rc=%s)", rc)
         c.subscribe(self.t_control, qos=0)
+        c.subscribe(f"ctek/client/{self.serial}/sma/meterdata", qos=0)
         c.publish(self.t_station_cfg,
                   json.dumps({"FW": FW, "StationPhaseRotation": "RST"}), retain=True)
         c.publish(self.t_outlet_cfg, json.dumps({
@@ -90,6 +96,13 @@ class MockCharger:
         }), retain=True)
 
     def _on_message(self, c, u, msg):
+        if msg.topic.endswith("/meterdata"):
+            if self.self_balance:
+                now = time.monotonic()
+                self._first_meter = self._first_meter or now
+                own = MIN_ALLOWED if now - self._first_meter < 60 else FUSE_RATING
+                c.publish(self.t_control, str(own))
+            return
         if msg.topic != self.t_control:
             return
         try:
@@ -149,6 +162,9 @@ async def main():
                     help="amps the car would draw if unrestricted - set this "
                          "below 16 to simulate a car with an onboard limit")
     ap.add_argument("--serial", default=DEFAULT_SERIAL)
+    ap.add_argument("--self-balance", action="store_true",
+                    help="answer each meterdata message with the charger's own "
+                         "setpoint, as the real one does")
     ap.add_argument("--pause-lapses", type=float, default=None, metavar="SECONDS",
                     help="a 0 A pause holds only this long before the charger "
                          "goes back to full current (default: holds for ever)")
@@ -169,7 +185,8 @@ async def main():
         args.host, args.port, args.serial, args.car_wants)
 
     await MockCharger(args.host, args.port, args.car_wants, args.serial,
-                      pause_lapses=args.pause_lapses).run()
+                      pause_lapses=args.pause_lapses,
+                      self_balance=args.self_balance).run()
 
 
 if __name__ == "__main__":

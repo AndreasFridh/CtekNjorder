@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.20.0
+
+- **Found and countered the cause of the start-stop cycling and the 16 A
+  spikes.** The 0.19.3 log showed the "foreign" setpoints arriving every 10.0
+  s, 0.1-0.3 s after each meter-data message this add-on sends: 6 A at first,
+  16 A after a minute. The charger runs its own load balancing on the meter
+  data we feed it, publishes the result on the same control topic, and obeys
+  whichever setpoint arrived last. So every ten seconds it overrode us:
+  - a 0 A pause became 6 or 16 A, and the car restarted - the cycling while
+    charging was not allowed;
+  - a 7 A allowance became 16 A for a few seconds - the spikes in the chart.
+
+  Whenever a setpoint we did not send asks for **more** than ours, the add-on
+  now re-sends its own at once, so the override lasts a fraction of a second
+  instead of until the next heartbeat. A lower one is left alone: less
+  current is always the safe direction.
+- Repeated foreign setpoints are logged at debug; a change of value at info.
+- `tools/mock_charger.py --self-balance` reproduces the charger's behaviour.
+
 ## 0.19.3
 
 - No change to the add-on. New `tools/find_nanogrid.py`, run from a computer on

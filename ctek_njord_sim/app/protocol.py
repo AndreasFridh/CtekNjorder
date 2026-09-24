@@ -173,6 +173,36 @@ def resend_needed(setpoint: int, drawn: float, since_sent: float,
     return drawn >= PAUSE_BREACH and since_sent >= PAUSE_RESEND_EVERY
 
 
+# Least time between two re-assertions of our setpoint over a foreign one, so
+# two controllers doing the same thing cannot flood the broker.
+REASSERT_EVERY = 2.0
+
+
+def should_reassert(ours: int | None, theirs, since_last: float) -> bool:
+    """
+    A setpoint we did not send has arrived: send ours again straight away?
+
+    The charger answers every meterdata message with its own setpoint on the
+    same control topic - its own load balancing, computed from the readings
+    we feed it - and the charger obeys whichever arrived last. Field log: 6 A
+    then 16 A arriving 0.1-0.3 s after each of our 10 s meterdata publishes,
+    overriding our 0 A pause (the car restarted every cycle) and our 7 A
+    (the car spiked to 16 A every ten seconds).
+
+    Only a HIGHER value is countered, and at once, so it holds for a fraction
+    of a second instead of until our next heartbeat. A lower one is left
+    alone: less current is always the safe direction, and it is not ours to
+    override.
+    """
+    if ours is None:
+        return False
+    try:
+        theirs = int(theirs)
+    except (TypeError, ValueError):
+        return False
+    return theirs > ours and since_last >= REASSERT_EVERY
+
+
 class ForeignCommands:
     """
     Tells our own setpoints apart from anyone else's on the control topic.

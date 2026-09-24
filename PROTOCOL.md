@@ -94,6 +94,19 @@ lifted from a capture; the field names, units and types are what was observed.
 Power in **kW** — note the charger's own `info.power` is in **W**.
 `activePowerOut` is export (solar); it stayed `0.0` throughout.
 
+> **The charger publishes here too (field log, 2026-09-24).** With no
+> Nanogrid Air on the network, a setpoint the add-on did not send arrived on
+> this topic **0.1–0.3 s after every meterdata message the add-on
+> published** (every 10 s): `6` for the first minute, then `16`, the same
+> cold-start shape attributed to the adapter below. The charger appears to
+> run its own load balancing on the meter data it is fed, publish the result
+> here, and obey **whichever setpoint arrived last**. MQTT cannot say who
+> published a message, so in the original captures some of the "adapter"
+> setpoints may have been the charger's. Consequences seen: a `0` pause
+> overridden within seconds (the car restarted every cycle), and a steady `7`
+> overridden to `16` for a few seconds every ten. Since 0.20.0 the add-on
+> immediately re-sends its own setpoint whenever a higher foreign one arrives.
+
 **`ctek/ng-v2/controller/{CB}/1/current`** — every **12–15 s** ← **the control channel**
 ```
 16
@@ -211,6 +224,10 @@ then throttle against the wrong phase. `PrimaryPhase: 1` and
    either the charger publishes its default to the control topic as it
    resets after a `0`, or another client on the broker does. 0.19.2 logs
    each one with its delay after our last command to tell them apart.
+
+   Resolved by the 0.19.3 log: the foreign setpoints arrive every 10.0 s, in
+   step with our meterdata, not with our commands. See the note under the
+   control topic above.
 3. **`State` enum.** Field report (2026-09, add-on 0.17.2, car plugged in)
    saw five values. Meanings are inferred, not confirmed:
 

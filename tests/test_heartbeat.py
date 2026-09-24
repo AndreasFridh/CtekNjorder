@@ -80,3 +80,30 @@ def test_an_old_send_does_not_excuse_a_later_value():
 def test_garbage_on_the_topic_is_ignored():
     f = ForeignCommands()
     assert not f.seen(1.0, {"not": "a setpoint"})
+
+
+# ---------- the charger's own setpoints, answering our meter data ----------
+
+from app.protocol import REASSERT_EVERY, should_reassert  # noqa: E402
+
+
+def test_a_higher_foreign_setpoint_is_countered_at_once():
+    # Field log: our 0 A pause overridden by 6 A / 16 A every ten seconds.
+    assert should_reassert(0, 16, since_last=10.0)
+    assert should_reassert(0, "6", since_last=10.0)
+    assert should_reassert(7, 16, since_last=10.0)
+
+
+def test_a_lower_foreign_setpoint_is_left_alone():
+    # Less current is the safe direction; overriding it is not ours to do.
+    assert not should_reassert(16, 6, since_last=10.0)
+    assert not should_reassert(7, 7, since_last=10.0)
+
+
+def test_countering_is_rate_limited():
+    assert not should_reassert(0, 16, since_last=REASSERT_EVERY - 0.1)
+
+
+def test_nothing_is_countered_before_we_have_said_anything():
+    assert not should_reassert(None, 16, since_last=100.0)
+    assert not should_reassert(0, {"junk": 1}, since_last=100.0)

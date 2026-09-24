@@ -127,6 +127,8 @@ class CtekClient:
         self._sent_value: int | None = None
         self._sent_at = 0.0
         self._clients_seen: str | None = None
+        self._foreign_last = None
+        self._reasserted_at = -1e9
 
         cid = f"ctek-ha-sim-{uuid.uuid4().hex[:8]}"
         self._c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=cid,
@@ -359,13 +361,27 @@ class CtekClient:
             _LOG.info("[%s] foreign setpoint %sA, %s (dry run: expected)",
                       self.name, value, after)
             return
-        _LOG.info("[%s] foreign setpoint %sA on our control topic, %s",
-                  self.name, value, after)
+
+        # Logged at info when it changes, debug when it repeats: it arrives
+        # every ten seconds for as long as we feed the charger meter data.
+        (_LOG.info if value != self._foreign_last else _LOG.debug)(
+            "[%s] foreign setpoint %sA on our control topic, %s",
+            self.name, value, after)
+        self._foreign_last = value
+
+        if protocol.should_reassert(self._sent_value, value, now - self._reasserted_at):
+            self._reasserted_at = now
+            with self.state._lock:
+                self.state.foreign.sent(now, self._sent_value)
+            self._publish(self.topics.control_current,
+                          protocol.control_current_payload(self._sent_value))
+            _LOG.debug("[%s] re-asserted %sA over foreign %sA",
+                       self.name, self._sent_value, value)
+
         if now - self._foreign_warned >= self.FOREIGN_WARN_EVERY:
             self._foreign_warned = now
             _LOG.warning(
-                "[%s] something other than this add-on is commanding the charger "
-                "(%sA). Either another controller is connected to its broker - a "
-                "Nanogrid Air, or a second copy of this add-on - or the charger "
-                "publishes it itself. The 'foreign setpoint' lines show which: "
-                "see their timing.", self.name, value)
+                "[%s] the charger is also receiving setpoints this add-on did not "
+                "send (%sA) - apparently its own load balancing, answering our "
+                "meter data. Any higher than ours are overridden at once.",
+                self.name, value)
